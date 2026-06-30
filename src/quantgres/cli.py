@@ -19,6 +19,10 @@ from quantgres.experiments.rdb_paper_trace import (
     run_binance_paper_trace_smoke,
 )
 from quantgres.experiments.rdb_trading_ledger import TradingLedgerSmokeResult, run_smoke
+from quantgres.experiments.search_documents import (
+    SearchDocumentSmokeResult,
+    run_search_document_smoke,
+)
 from quantgres.experiments.time_series_candles import CandleSmokeResult
 from quantgres.experiments.time_series_candles import run_smoke as run_candle_smoke
 from quantgres.onchain.bnb_rpc import DEFAULT_BNB_RPC_URL, BnbRpcInfo, load_bnb_rpc_info
@@ -97,6 +101,14 @@ def build_parser() -> ArgumentParser:
     )
     jsonb_smoke.add_argument("--symbol", default="BTCUSDT")
     jsonb_smoke.add_argument("--document-limit", type=int, default=10)
+
+    search_smoke = subparsers.add_parser(
+        "search-document-smoke",
+        help="Project JSONB documents into a full-text/trigram search table and query them.",
+    )
+    search_smoke.add_argument("--query", default="pancakeswap swap")
+    search_smoke.add_argument("--fuzzy", default="0x16b9a82891338f9b")
+    search_smoke.add_argument("--limit", type=int, default=5)
 
     return parser
 
@@ -371,6 +383,49 @@ def run_jsonb_documents(args: Namespace) -> int:
     return 0
 
 
+def format_search_document_smoke(result: SearchDocumentSmokeResult) -> list[str]:
+    lines = [
+        "Search Document Smoke",
+        f"Projected documents: {result.projected_documents}",
+        "Full-text results:",
+    ]
+    lines.extend(f"- {row.source} {row.title} rank={row.score}" for row in result.full_text_results)
+    lines.append("Trigram results:")
+    lines.extend(
+        f"- {row.source} {row.fuzzy_key} similarity={row.score}" for row in result.trigram_results
+    )
+    lines.extend(
+        [
+            (
+                f"Full-text plan: root_node={result.full_text_plan.root_node_type} "
+                f"planning_time_ms={result.full_text_plan.planning_time_ms} "
+                f"execution_time_ms={result.full_text_plan.execution_time_ms}"
+            ),
+            (
+                f"Trigram plan: root_node={result.trigram_plan.root_node_type} "
+                f"planning_time_ms={result.trigram_plan.planning_time_ms} "
+                f"execution_time_ms={result.trigram_plan.execution_time_ms}"
+            ),
+        ]
+    )
+    return lines
+
+
+def run_search_documents(args: Namespace) -> int:
+    result = run_search_document_smoke(
+        full_text_query=args.query,
+        fuzzy_query=args.fuzzy,
+        limit=args.limit,
+    )
+    for line in format_search_document_smoke(result):
+        print(line)
+
+    if not result.full_text_results or not result.trigram_results:
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -404,6 +459,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "jsonb-document-smoke":
         return run_jsonb_documents(args)
+
+    if args.command == "search-document-smoke":
+        return run_search_documents(args)
 
     parser.print_help()
     return 0
