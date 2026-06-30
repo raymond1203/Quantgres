@@ -37,6 +37,10 @@ from quantgres.experiments.search_documents import (
 )
 from quantgres.experiments.time_series_candles import CandleSmokeResult
 from quantgres.experiments.time_series_candles import run_smoke as run_candle_smoke
+from quantgres.experiments.vector_memory import (
+    VectorMemorySmokeResult,
+    run_vector_memory_smoke,
+)
 from quantgres.onchain.bnb_rpc import DEFAULT_BNB_RPC_URL, BnbRpcInfo, load_bnb_rpc_info
 from quantgres.onchain.bnb_rpc import parse_block_arg as parse_bnb_block_arg
 from quantgres.runtime import DatabaseRuntimeInfo, load_runtime_info
@@ -138,6 +142,14 @@ def build_parser() -> ArgumentParser:
     search_smoke.add_argument("--query", default="pancakeswap swap")
     search_smoke.add_argument("--fuzzy", default="0x16b9a82891338f9b")
     search_smoke.add_argument("--limit", type=int, default=5)
+
+    vector_memory = subparsers.add_parser(
+        "vector-memory-smoke",
+        help="Project real search documents into pgvector memory and run similarity search.",
+    )
+    vector_memory.add_argument("--query", default="pancakeswap swap bnb chain")
+    vector_memory.add_argument("--source-limit", type=int, default=1000)
+    vector_memory.add_argument("--limit", type=int, default=5)
 
     subparsers.add_parser(
         "queue-smoke",
@@ -545,6 +557,50 @@ def run_search_documents(args: Namespace) -> int:
     return 0
 
 
+def format_vector_memory_smoke(result: VectorMemorySmokeResult) -> list[str]:
+    lines = [
+        "Vector Memory Smoke",
+        f"Projected chunks: {result.projected_chunks}",
+        f"Total chunks: {result.total_chunks}",
+        f"Query: {result.query_text}",
+        "Similarity results:",
+    ]
+    lines.extend(
+        (
+            f"- {row.source} {row.title} "
+            f"similarity={row.cosine_similarity:.6f} "
+            f"external_id={row.external_id}"
+        )
+        for row in result.results
+    )
+    lines.extend(
+        [
+            (
+                f"Plan: root_node={result.plan.root_node_type} "
+                f"indexes={','.join(result.plan.index_names)} "
+                f"planning_time_ms={result.plan.planning_time_ms} "
+                f"execution_time_ms={result.plan.execution_time_ms}"
+            )
+        ]
+    )
+    return lines
+
+
+def run_vector_memory(args: Namespace) -> int:
+    result = run_vector_memory_smoke(
+        query=args.query,
+        source_limit=args.source_limit,
+        result_limit=args.limit,
+    )
+    for line in format_vector_memory_smoke(result):
+        print(line)
+
+    if not result.results:
+        return 1
+
+    return 0
+
+
 def format_queue_smoke(result: QueueSmokeResult) -> list[str]:
     lines = [
         "QueueDB Smoke",
@@ -632,6 +688,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "search-document-smoke":
         return run_search_documents(args)
+
+    if args.command == "vector-memory-smoke":
+        return run_vector_memory(args)
 
     if args.command == "queue-smoke":
         return run_queue_jobs()

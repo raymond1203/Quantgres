@@ -13,6 +13,7 @@ Initial conventions:
 - `time_series/`: tick, candle, indexing, and partitioning experiments
 - `document/`: JSONB document store experiments
 - `vector/`: pgvector experiments
+- `memory/`: pgvector-backed agent memory experiments
 - `search/`: full-text and trigram search experiments
 - `queue/`: `SKIP LOCKED` and notification experiments
 - `defi/`: normalized DeFi event projections from raw on-chain logs
