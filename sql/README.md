@@ -15,6 +15,7 @@ Initial conventions:
 - `vector/`: pgvector experiments
 - `search/`: full-text and trigram search experiments
 - `queue/`: `SKIP LOCKED` and notification experiments
+- `defi/`: normalized DeFi event projections from raw on-chain logs
 - `cache/`: materialized view, summary table, and TTL cache experiments
 - `olap/`: analytics and rollup experiments
 - `event_store/`: append-only audit log experiments
