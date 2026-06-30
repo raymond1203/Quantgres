@@ -27,7 +27,8 @@ real public data where possible:
 
 - Binance public market-data endpoints for candles, prices, trades, and order
   book snapshots. These do not require Binance API keys.
-- BNB Chain JSON-RPC logs for raw on-chain event ingestion in later loops.
+- BNB Chain JSON-RPC logs for raw on-chain event ingestion. This does not
+  require wallet keys.
 - Dune only as an optional external reconciliation source after Quantgres has
   its own raw RPC ingestion.
 
@@ -87,6 +88,8 @@ uv run quantgres benchmark-rdb-ledger
 uv run quantgres time-series-candles-smoke
 uv run quantgres ingest-binance-klines --symbol BTCUSDT --interval 1m --limit 60
 uv run quantgres binance-paper-trace-smoke --symbol BTCUSDT --interval 1m --limit 60
+uv run quantgres bnb-rpc-info
+uv run quantgres ingest-bnb-logs --from-block 107270817 --to-block 107270817 --address 0x16b9a82891338f9ba80e2d6970fdda79d1eb0dae --topic0 0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
 ```
 
 ## Project Layout
