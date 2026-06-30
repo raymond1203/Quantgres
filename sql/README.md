@@ -8,6 +8,7 @@ operators remain easy to inspect.
 Initial conventions:
 
 - `000_extensions.sql`: local extension setup
+- `001_runtime_checks.sql`: PostgreSQL runtime and extension checks
 - `rdb/`: relational ledger experiments
 - `time_series/`: tick, candle, and partitioning experiments
 - `document/`: JSONB document store experiments
