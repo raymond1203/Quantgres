@@ -24,35 +24,61 @@ fixture_candles AS (
         fixture_symbols.base_price
     FROM fixture_symbols
     CROSS JOIN fixture_minutes
+),
+fixture_rows AS (
+    SELECT
+        symbol,
+        ts,
+        ts + interval '1 minute' - interval '1 millisecond' AS close_ts,
+        base_price + (minute_index * 0.1000000000) AS open_price,
+        base_price + (minute_index * 0.1000000000) + 5.0000000000 AS high_price,
+        base_price + (minute_index * 0.1000000000) - 5.0000000000 AS low_price,
+        base_price + (minute_index * 0.1000000000)
+            + CASE WHEN minute_index % 2 = 0 THEN 1.0000000000 ELSE -1.0000000000 END
+            AS close_price,
+        10.0000000000 + (minute_index % 100) AS volume,
+        100 + (minute_index % 50) AS trade_count
+    FROM fixture_candles
 )
 INSERT INTO time_series.candles_1m (
     symbol,
     ts,
+    close_ts,
     open_price,
     high_price,
     low_price,
     close_price,
     volume,
+    quote_volume,
     trade_count,
+    taker_buy_base_volume,
+    taker_buy_quote_volume,
     source
 )
 SELECT
     symbol,
     ts,
-    base_price + (minute_index * 0.1000000000) AS open_price,
-    base_price + (minute_index * 0.1000000000) + 5.0000000000 AS high_price,
-    base_price + (minute_index * 0.1000000000) - 5.0000000000 AS low_price,
-    base_price + (minute_index * 0.1000000000)
-        + CASE WHEN minute_index % 2 = 0 THEN 1.0000000000 ELSE -1.0000000000 END AS close_price,
-    10.0000000000 + (minute_index % 100) AS volume,
-    100 + (minute_index % 50) AS trade_count,
+    close_ts,
+    open_price,
+    high_price,
+    low_price,
+    close_price,
+    volume,
+    close_price * volume AS quote_volume,
+    trade_count,
+    volume * 0.4500000000 AS taker_buy_base_volume,
+    close_price * volume * 0.4500000000 AS taker_buy_quote_volume,
     'fixture' AS source
-FROM fixture_candles
+FROM fixture_rows
 ON CONFLICT (symbol, ts) DO UPDATE
-SET open_price = EXCLUDED.open_price,
+SET close_ts = EXCLUDED.close_ts,
+    open_price = EXCLUDED.open_price,
     high_price = EXCLUDED.high_price,
     low_price = EXCLUDED.low_price,
     close_price = EXCLUDED.close_price,
     volume = EXCLUDED.volume,
+    quote_volume = EXCLUDED.quote_volume,
     trade_count = EXCLUDED.trade_count,
+    taker_buy_base_volume = EXCLUDED.taker_buy_base_volume,
+    taker_buy_quote_volume = EXCLUDED.taker_buy_quote_volume,
     source = EXCLUDED.source;

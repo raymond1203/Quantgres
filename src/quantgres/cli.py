@@ -4,7 +4,15 @@ from collections.abc import Sequence
 from quantgres import __version__
 from quantgres.config import load_settings, mask_database_url
 from quantgres.db import ping
+from quantgres.experiments.binance_candles import (
+    BinanceCandleIngestionResult,
+    fetch_and_store_binance_klines,
+)
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
+from quantgres.experiments.rdb_paper_trace import (
+    BinancePaperTraceSmokeResult,
+    run_binance_paper_trace_smoke,
+)
 from quantgres.experiments.rdb_trading_ledger import TradingLedgerSmokeResult, run_smoke
 from quantgres.experiments.time_series_candles import CandleSmokeResult
 from quantgres.experiments.time_series_candles import run_smoke as run_candle_smoke
@@ -43,6 +51,22 @@ def build_parser() -> ArgumentParser:
         "time-series-candles-smoke",
         help="Apply the candle fixture and verify a symbol/time range query.",
     )
+
+    ingest_binance = subparsers.add_parser(
+        "ingest-binance-klines",
+        help="Fetch public Binance Spot klines and upsert them into time_series.candles_1m.",
+    )
+    ingest_binance.add_argument("--symbol", default="BTCUSDT")
+    ingest_binance.add_argument("--interval", default="1m")
+    ingest_binance.add_argument("--limit", type=int, default=60)
+
+    paper_trace = subparsers.add_parser(
+        "binance-paper-trace-smoke",
+        help="Fetch Binance klines and record a paper-only RDB decision trace.",
+    )
+    paper_trace.add_argument("--symbol", default="BTCUSDT")
+    paper_trace.add_argument("--interval", default="1m")
+    paper_trace.add_argument("--limit", type=int, default=60)
 
     return parser
 
@@ -169,6 +193,75 @@ def run_time_series_candles_smoke() -> int:
     return 0
 
 
+def format_binance_ingestion(result: BinanceCandleIngestionResult) -> list[str]:
+    return [
+        "Binance Kline Ingestion",
+        f"Source: {result.source}",
+        f"Symbol: {result.symbol}",
+        f"Interval: {result.interval}",
+        f"Rows fetched: {result.rows_fetched}",
+        f"Rows upserted: {result.rows_upserted}",
+        f"First timestamp: {result.first_ts}",
+        f"Last timestamp: {result.last_ts}",
+    ]
+
+
+def run_ingest_binance_klines(args: Namespace) -> int:
+    result = fetch_and_store_binance_klines(
+        symbol=args.symbol,
+        interval=args.interval,
+        limit=args.limit,
+    )
+    for line in format_binance_ingestion(result):
+        print(line)
+
+    if result.rows_fetched == 0:
+        return 1
+
+    return 0
+
+
+def format_binance_paper_trace(result: BinancePaperTraceSmokeResult) -> list[str]:
+    trace = result.trace
+    return [
+        "Binance Paper Trace Smoke",
+        f"Rows fetched: {result.rows_fetched}",
+        f"Rows upserted: {result.rows_upserted}",
+        (
+            f"Decision: client_order_id={trace.client_order_id} "
+            f"symbol={trace.symbol} "
+            f"side={trace.side} "
+            f"decision_at={trace.decision_at}"
+        ),
+        (
+            f"Signal: previous_close={trace.previous_close} "
+            f"latest_close={trace.latest_close} "
+            f"return_bps={trace.return_bps}"
+        ),
+        (
+            f"Paper execution: quantity={trace.quantity} "
+            f"trade_notional={trace.trade_notional} "
+            f"cash_delta={trace.cash_delta} "
+            f"fee_amount={trace.fee_amount}"
+        ),
+    ]
+
+
+def run_binance_paper_trace(args: Namespace) -> int:
+    result = run_binance_paper_trace_smoke(
+        symbol=args.symbol,
+        interval=args.interval,
+        limit=args.limit,
+    )
+    for line in format_binance_paper_trace(result):
+        print(line)
+
+    if result.rows_fetched < 2:
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -187,6 +280,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "time-series-candles-smoke":
         return run_time_series_candles_smoke()
+
+    if args.command == "ingest-binance-klines":
+        return run_ingest_binance_klines(args)
+
+    if args.command == "binance-paper-trace-smoke":
+        return run_binance_paper_trace(args)
 
     parser.print_help()
     return 0

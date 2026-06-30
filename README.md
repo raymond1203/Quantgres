@@ -1,7 +1,8 @@
 # Quantgres
 
 Quantgres is a PostgreSQL deep-dive project for learning production database
-patterns through quantitative research and AI-agent workloads.
+patterns through realistic DeFi, market-data, quantitative research, and
+paper-trading agent workloads.
 
 The project uses PostgreSQL as a practical lab for DB types that are often
 separate systems in production:
@@ -19,6 +20,19 @@ separate systems in production:
 
 The goal is not to hide PostgreSQL behind abstractions. Experiments should keep
 schemas, SQL, query plans, indexes, and benchmark results visible.
+
+The project should not stop at synthetic smoke tests. Deterministic fixtures are
+used to prove schemas and constraints, but portfolio evidence should come from
+real public data where possible:
+
+- Binance public market-data endpoints for candles, prices, trades, and order
+  book snapshots. These do not require Binance API keys.
+- BNB Chain JSON-RPC logs for raw on-chain event ingestion in later loops.
+- Dune only as an optional external reconciliation source after Quantgres has
+  its own raw RPC ingestion.
+
+Live trading and signed private exchange endpoints are out of scope. Trading
+agent examples write paper-only decisions and execution traces into PostgreSQL.
 
 ## Toolchain
 
@@ -71,6 +85,8 @@ uv run quantgres db-info
 uv run quantgres rdb-ledger-smoke
 uv run quantgres benchmark-rdb-ledger
 uv run quantgres time-series-candles-smoke
+uv run quantgres ingest-binance-klines --symbol BTCUSDT --interval 1m --limit 60
+uv run quantgres binance-paper-trace-smoke --symbol BTCUSDT --interval 1m --limit 60
 ```
 
 ## Project Layout

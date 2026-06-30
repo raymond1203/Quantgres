@@ -1,7 +1,9 @@
 # RDB Trading Ledger Experiment
 
 This experiment models a minimal trading ledger using PostgreSQL relational
-features only.
+features only. It starts with a deterministic ledger fixture and is hardened by
+recording paper-only order/fill/cash/position traces from real Binance public
+candle data.
 
 ## Study Question
 
@@ -74,6 +76,30 @@ Expected fixture facts:
 - Account `A1` has `76183.8100000000 USDT`.
 - Account `A2` holds `3 ETHUSDT`.
 - Account `A2` has `15690.7000000000 USDT`.
+
+## Real-Data Paper Trace
+
+The RDB ledger should not remain a synthetic-only example. Use real Binance
+public candles as the market input, then record a paper-only decision trace into
+the ledger:
+
+```powershell
+uv run quantgres binance-paper-trace-smoke --symbol BTCUSDT --interval 1m --limit 60
+```
+
+Expected behavior:
+
+- Fetches real public Binance klines without an API key.
+- Stores the candles in `time_series.candles_1m`.
+- Reads the latest two stored Binance candles.
+- Creates or updates the `PAPER1` account and
+  `binance_kline_momentum_v1` strategy.
+- Records a paper-only market order, fill, cash ledger trade/fee entries, and
+  position snapshot in RDB tables.
+
+This is not live trading and does not call any signed/private Binance endpoint.
+It is a database trace that connects real market data to relational ledger
+state.
 
 ## Benchmark Query
 

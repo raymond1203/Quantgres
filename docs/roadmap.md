@@ -1,7 +1,14 @@
 # Quantgres Roadmap
 
-Quantgres starts as a DB study project. Quant and AI-agent workflows provide the
-domain context for realistic PostgreSQL experiments.
+Quantgres starts as a DB study project. DeFi, market-data, quant, and
+paper-agent workflows provide the domain context for realistic PostgreSQL
+experiments.
+
+Synthetic fixtures are allowed for deterministic schema and constraint checks,
+but each core track should be hardened with real public data before moving on.
+The primary data sources are Binance public market-data endpoints and BNB Chain
+JSON-RPC logs. Dune is optional and should only be used later for external
+metric comparison, not as the primary ingestion path.
 
 ## Phase 0: Foundation
 
@@ -17,6 +24,10 @@ domain context for realistic PostgreSQL experiments.
 2. Time-Series DB / Quant Market Data
 3. Document DB / JSONB
 4. Vector DB / pgvector
+
+RDB and Time-Series should be connected by a real-data vertical slice before
+the next track: Binance public klines -> `time_series.candles_1m` -> paper-only
+RDB order/fill/cash/position trace.
 
 ## Phase 2: Backend System Patterns
 
@@ -35,7 +46,8 @@ domain context for realistic PostgreSQL experiments.
 Each track should produce small, reproducible experiments:
 
 - schema
-- sample data
+- deterministic sample data for schema smoke checks
+- real public API or RPC data for portfolio evidence when available
 - benchmark query
 - index or schema variant
 - `EXPLAIN ANALYZE`
