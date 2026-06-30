@@ -41,6 +41,10 @@ The SearchDB track projects those JSONB documents into searchable text:
 `documents.raw_payloads` -> `search.search_documents` -> full-text GIN search
 and trigram fuzzy lookup.
 
+The QueueDB track models ingestion orchestration:
+job payloads -> `queue.ingestion_jobs` -> `FOR UPDATE SKIP LOCKED` worker claim
+-> retry and dead-letter state transitions.
+
 ## Phase 2: Backend System Patterns
 
 5. Search DB / Full-Text, Trigram, Hybrid Search
