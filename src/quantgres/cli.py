@@ -9,6 +9,13 @@ from quantgres.experiments.binance_candles import (
     fetch_and_store_binance_klines,
 )
 from quantgres.experiments.bnb_raw_logs import BnbLogIngestionResult, fetch_and_store_bnb_logs
+from quantgres.experiments.bnb_swap_projection import (
+    PANCAKESWAP_SAMPLE_BLOCK,
+    PANCAKESWAP_V2_SWAP_TOPIC0,
+    PANCAKESWAP_V2_WBNB_USDT_PAIR,
+    BnbSwapProjectionSmokeResult,
+    run_bnb_swap_projection_smoke,
+)
 from quantgres.experiments.jsonb_documents import (
     JsonbDocumentSmokeResult,
     run_jsonb_document_smoke,
@@ -95,6 +102,16 @@ def build_parser() -> ArgumentParser:
     ingest_bnb_logs.add_argument("--to-block", required=True)
     ingest_bnb_logs.add_argument("--address")
     ingest_bnb_logs.add_argument("--topic0")
+
+    bnb_swap_projection = subparsers.add_parser(
+        "bnb-swap-projection-smoke",
+        help="Fetch BNB Chain Swap logs and project them into defi.swap_events.",
+    )
+    bnb_swap_projection.add_argument("--rpc-url", default=DEFAULT_BNB_RPC_URL)
+    bnb_swap_projection.add_argument("--from-block", default=str(PANCAKESWAP_SAMPLE_BLOCK))
+    bnb_swap_projection.add_argument("--to-block", default=str(PANCAKESWAP_SAMPLE_BLOCK))
+    bnb_swap_projection.add_argument("--address", default=PANCAKESWAP_V2_WBNB_USDT_PAIR)
+    bnb_swap_projection.add_argument("--topic0", default=PANCAKESWAP_V2_SWAP_TOPIC0)
 
     jsonb_smoke = subparsers.add_parser(
         "jsonb-document-smoke",
@@ -354,6 +371,49 @@ def run_ingest_bnb_logs(args: Namespace) -> int:
     return 0
 
 
+def format_bnb_swap_projection(result: BnbSwapProjectionSmokeResult) -> list[str]:
+    lines = [
+        "BNB Swap Projection Smoke",
+        f"RPC URL: {result.ingestion.rpc_url}",
+        f"Raw logs fetched: {result.ingestion.rows_fetched}",
+        f"Raw logs upserted: {result.ingestion.rows_upserted}",
+        f"Projected events: {result.projected_events}",
+        "Sample events:",
+    ]
+    lines.extend(
+        (
+            f"- block={event.block_number} "
+            f"tx={event.transaction_hash} "
+            f"log_index={event.log_index} "
+            f"sender={event.sender} "
+            f"recipient={event.recipient} "
+            f"amount0_in={event.amount0_in} "
+            f"amount1_in={event.amount1_in} "
+            f"amount0_out={event.amount0_out} "
+            f"amount1_out={event.amount1_out}"
+        )
+        for event in result.sample_events
+    )
+    return lines
+
+
+def run_bnb_swap_projection(args: Namespace) -> int:
+    result = run_bnb_swap_projection_smoke(
+        rpc_url=args.rpc_url,
+        from_block=parse_bnb_block_arg(args.from_block),
+        to_block=parse_bnb_block_arg(args.to_block),
+        pair_address=args.address,
+        topic0=args.topic0,
+    )
+    for line in format_bnb_swap_projection(result):
+        print(line)
+
+    if result.projected_events == 0 or not result.sample_events:
+        return 1
+
+    return 0
+
+
 def format_jsonb_document_smoke(result: JsonbDocumentSmokeResult) -> list[str]:
     lines = [
         "JSONB Document Store Smoke",
@@ -507,6 +567,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "ingest-bnb-logs":
         return run_ingest_bnb_logs(args)
+
+    if args.command == "bnb-swap-projection-smoke":
+        return run_bnb_swap_projection(args)
 
     if args.command == "jsonb-document-smoke":
         return run_jsonb_documents(args)

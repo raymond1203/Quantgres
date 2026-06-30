@@ -67,3 +67,5 @@ Expected behavior:
 
 This experiment does not require wallet keys, exchange keys, or paid RPC
 provider credentials.
+
+The next projection layer is documented in `docs/bnb-swap-events.md`.
