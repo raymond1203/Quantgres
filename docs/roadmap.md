@@ -89,6 +89,10 @@ The first Feature Store track stores point-in-time quant inputs:
 `analytics.market_return_panel` plus `time_series.candles_1m` ->
 `feature_store.quant_feature_snapshots` typed feature rows with as-of lookup.
 
+The first immutable Feature Store batch track preserves research snapshots:
+`analytics.market_return_panel` source rows ->
+`feature_store.quant_feature_batches` plus batch items for reproducible runs.
+
 ## Phase 2: Backend System Patterns
 
 5. Search DB / Full-Text, Trigram, Hybrid Search
