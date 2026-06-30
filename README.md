@@ -102,6 +102,7 @@ uv run quantgres event-store-smoke
 uv run quantgres feature-store-smoke
 uv run quantgres hybrid-retrieval-smoke
 uv run quantgres queue-smoke
+uv run quantgres queue-benchmark-smoke
 ```
 
 ## Project Layout

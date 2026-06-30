@@ -1,5 +1,7 @@
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -87,6 +89,38 @@ RETURNING
     job.locked_by
 """
 
+CLAIM_BENCHMARK_JOB_SQL = """
+WITH next_job AS (
+    SELECT job_id
+    FROM queue.ingestion_jobs
+    WHERE idempotency_key LIKE %(prefix)s
+      AND status IN ('available', 'failed')
+      AND available_at <= now()
+      AND attempts < max_attempts
+    ORDER BY priority DESC, available_at, job_id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+UPDATE queue.ingestion_jobs AS job
+SET status = 'running',
+    attempts = job.attempts + 1,
+    locked_by = %(worker_id)s,
+    locked_at = now(),
+    updated_at = now()
+FROM next_job
+WHERE job.job_id = next_job.job_id
+RETURNING
+    job.job_id,
+    job.job_kind,
+    job.idempotency_key,
+    job.payload,
+    job.status,
+    job.priority,
+    job.attempts,
+    job.max_attempts,
+    job.locked_by
+"""
+
 COMPLETE_JOB_SQL = """
 UPDATE queue.ingestion_jobs
 SET status = 'completed',
@@ -136,6 +170,13 @@ WHERE idempotency_key IN (
 ORDER BY idempotency_key
 """
 
+BENCHMARK_STATUS_COUNT_SQL = """
+SELECT count(*)::integer
+FROM queue.ingestion_jobs
+WHERE idempotency_key LIKE %(prefix)s
+  AND status = %(status)s
+"""
+
 
 @dataclass(frozen=True)
 class QueueJob:
@@ -167,6 +208,26 @@ class QueueSmokeResult:
     second_claim: QueueJob
     retry_claim: QueueJob
     statuses: tuple[QueueJobStatus, ...]
+
+
+@dataclass(frozen=True)
+class QueueBenchmarkClaim:
+    worker_id: str
+    job_id: int
+    idempotency_key: str
+    priority: int
+
+
+@dataclass(frozen=True)
+class QueueBenchmarkResult:
+    job_count: int
+    worker_count: int
+    claimed_count: int
+    unique_claimed_count: int
+    duplicate_claim_count: int
+    completed_count: int
+    elapsed_ms: float
+    claims: tuple[QueueBenchmarkClaim, ...]
 
 
 def read_sql(path: Path) -> str:
@@ -206,6 +267,53 @@ def seed_queue_fixture(database_url: str | None = None) -> None:
         cursor.executemany(query_text(SEED_JOB_SQL), jobs)
 
 
+def benchmark_prefix(run_key: str) -> str:
+    return f"benchmark:queue-skip-locked:{run_key}:"
+
+
+def build_benchmark_jobs(
+    *,
+    job_count: int,
+    run_key: str,
+) -> tuple[dict[str, object], ...]:
+    if job_count <= 0:
+        raise ValueError("job_count must be positive.")
+
+    prefix = benchmark_prefix(run_key)
+    jobs: list[dict[str, object]] = []
+    for index in range(job_count):
+        if index % 2 == 0:
+            job_kind = "binance_klines"
+            payload = {"symbol": "BTCUSDT", "interval": "1m", "limit": 60}
+        else:
+            job_kind = "bnb_block_timestamp"
+            payload = {"from_block": 107270817, "to_block": 107270817}
+
+        jobs.append(
+            {
+                "job_kind": job_kind,
+                "idempotency_key": f"{prefix}{index:03d}",
+                "payload": Jsonb(payload),
+                "priority": job_count - index,
+                "max_attempts": 3,
+            }
+        )
+
+    return tuple(jobs)
+
+
+def seed_queue_benchmark_jobs(
+    *,
+    job_count: int,
+    run_key: str,
+    database_url: str | None = None,
+) -> None:
+    ensure_queue_schema(database_url)
+    jobs = build_benchmark_jobs(job_count=job_count, run_key=run_key)
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.executemany(query_text(SEED_JOB_SQL), jobs)
+
+
 def row_to_job(row: tuple[Any, ...]) -> QueueJob:
     return QueueJob(
         job_id=int(row[0]),
@@ -220,6 +328,15 @@ def row_to_job(row: tuple[Any, ...]) -> QueueJob:
     )
 
 
+def job_to_benchmark_claim(job: QueueJob) -> QueueBenchmarkClaim:
+    return QueueBenchmarkClaim(
+        worker_id=job.locked_by,
+        job_id=job.job_id,
+        idempotency_key=job.idempotency_key,
+        priority=job.priority,
+    )
+
+
 def claim_job(*, worker_id: str, database_url: str | None = None) -> QueueJob | None:
     with connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute(query_text(CLAIM_JOB_SQL), {"worker_id": worker_id})
@@ -229,6 +346,46 @@ def claim_job(*, worker_id: str, database_url: str | None = None) -> QueueJob | 
         return None
 
     return row_to_job(row)
+
+
+def count_duplicate_claims(claims: tuple[QueueBenchmarkClaim, ...]) -> int:
+    job_ids = [claim.job_id for claim in claims]
+    return len(job_ids) - len(set(job_ids))
+
+
+def claim_benchmark_jobs_with_open_transactions(
+    *,
+    worker_count: int,
+    run_key: str,
+    database_url: str | None = None,
+) -> tuple[QueueBenchmarkClaim, ...]:
+    if worker_count <= 0:
+        raise ValueError("worker_count must be positive.")
+
+    claims: list[QueueBenchmarkClaim] = []
+    with ExitStack() as stack:
+        connections = [stack.enter_context(connect(database_url)) for _ in range(worker_count)]
+        cursors = [stack.enter_context(connection.cursor()) for connection in connections]
+
+        for index, cursor in enumerate(cursors):
+            worker_id = f"benchmark-worker-{index + 1}"
+            cursor.execute(
+                query_text(CLAIM_BENCHMARK_JOB_SQL),
+                {
+                    "prefix": benchmark_prefix(run_key) + "%",
+                    "worker_id": worker_id,
+                },
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                claims.append(job_to_benchmark_claim(row_to_job(row)))
+
+        for claim, cursor in zip(claims, cursors, strict=False):
+            cursor.execute(query_text(COMPLETE_JOB_SQL), {"job_id": claim.job_id})
+            if cursor.fetchone() is None:
+                raise RuntimeError(f"Could not complete benchmark job {claim.job_id}.")
+
+    return tuple(claims)
 
 
 def complete_job(*, job_id: int, database_url: str | None = None) -> None:
@@ -281,6 +438,28 @@ def load_job_statuses(database_url: str | None = None) -> tuple[QueueJobStatus, 
     )
 
 
+def count_benchmark_jobs_by_status(
+    *,
+    run_key: str,
+    status: str,
+    database_url: str | None = None,
+) -> int:
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            query_text(BENCHMARK_STATUS_COUNT_SQL),
+            {
+                "prefix": benchmark_prefix(run_key) + "%",
+                "status": status,
+            },
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        raise RuntimeError("Benchmark status count returned no row.")
+
+    return int(row[0])
+
+
 def run_queue_smoke(database_url: str | None = None) -> QueueSmokeResult:
     ensure_queue_schema(database_url)
     seed_queue_fixture(database_url)
@@ -305,4 +484,41 @@ def run_queue_smoke(database_url: str | None = None) -> QueueSmokeResult:
         second_claim=second_claim,
         retry_claim=retry_claim,
         statuses=load_job_statuses(database_url),
+    )
+
+
+def run_queue_benchmark_smoke(
+    *,
+    job_count: int = 12,
+    worker_count: int = 4,
+    run_key: str = "default",
+    database_url: str | None = None,
+) -> QueueBenchmarkResult:
+    seed_queue_benchmark_jobs(
+        job_count=job_count,
+        run_key=run_key,
+        database_url=database_url,
+    )
+    started_at = perf_counter()
+    claims = claim_benchmark_jobs_with_open_transactions(
+        worker_count=worker_count,
+        run_key=run_key,
+        database_url=database_url,
+    )
+    elapsed_ms = (perf_counter() - started_at) * 1000
+    duplicate_claim_count = count_duplicate_claims(claims)
+
+    return QueueBenchmarkResult(
+        job_count=job_count,
+        worker_count=worker_count,
+        claimed_count=len(claims),
+        unique_claimed_count=len({claim.job_id for claim in claims}),
+        duplicate_claim_count=duplicate_claim_count,
+        completed_count=count_benchmark_jobs_by_status(
+            run_key=run_key,
+            status="completed",
+            database_url=database_url,
+        ),
+        elapsed_ms=elapsed_ms,
+        claims=claims,
     )

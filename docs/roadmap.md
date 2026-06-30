@@ -67,6 +67,10 @@ The QueueDB track models ingestion orchestration:
 job payloads -> `queue.ingestion_jobs` -> `FOR UPDATE SKIP LOCKED` worker claim
 -> retry and dead-letter state transitions.
 
+The first QueueDB benchmark opens multiple worker transactions:
+benchmark ingestion jobs -> concurrent `SKIP LOCKED` claims -> unique completed
+jobs without duplicate processing.
+
 The first CacheDB track uses a materialized view for repeated summary lookup:
 `time_series.candles_1m` plus `defi.swap_events` ->
 `cache.market_onchain_summary` -> indexed summary read compared with a base
