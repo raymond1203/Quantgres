@@ -27,6 +27,13 @@ from quantgres.experiments.feature_store import (
     FeatureStoreSmokeResult,
     run_feature_store_smoke,
 )
+from quantgres.experiments.hybrid_retrieval import (
+    SEARCH_VECTOR_INDEX_NAME,
+    TRIGRAM_INDEX_NAME,
+    VECTOR_INDEX_NAME,
+    HybridRetrievalSmokeResult,
+    run_hybrid_retrieval_smoke,
+)
 from quantgres.experiments.jsonb_documents import (
     JsonbDocumentSmokeResult,
     run_jsonb_document_smoke,
@@ -197,6 +204,16 @@ def build_parser() -> ArgumentParser:
     feature_store.add_argument("--binance-limit", type=int, default=500)
     feature_store.add_argument("--source-limit", type=int, default=100)
     feature_store.add_argument("--as-of")
+
+    hybrid_retrieval = subparsers.add_parser(
+        "hybrid-retrieval-smoke",
+        help="Combine SearchDB and VectorDB candidates into a hybrid ranked result.",
+    )
+    hybrid_retrieval.add_argument("--query", default="pancakeswap swap bnb chain")
+    hybrid_retrieval.add_argument("--fuzzy", default="0x16b9a82891338f9b")
+    hybrid_retrieval.add_argument("--source-limit", type=int, default=1000)
+    hybrid_retrieval.add_argument("--candidate-limit", type=int, default=100)
+    hybrid_retrieval.add_argument("--limit", type=int, default=5)
 
     subparsers.add_parser(
         "queue-smoke",
@@ -829,6 +846,59 @@ def run_feature_store(args: Namespace) -> int:
     return 0
 
 
+def format_hybrid_retrieval_smoke(result: HybridRetrievalSmokeResult) -> list[str]:
+    lines = [
+        "Hybrid Retrieval Smoke",
+        f"Projected chunks: {result.vector_projection.projected_chunks}",
+        f"Total chunks: {result.vector_projection.total_chunks}",
+        f"Query: {result.query}",
+        f"Fuzzy query: {result.fuzzy_query}",
+        f"Candidate limit: {result.candidate_limit}",
+        "Results:",
+    ]
+    lines.extend(
+        (
+            f"- {row.source} {row.title} "
+            f"hybrid_score={row.hybrid_score:.6f} "
+            f"text_rank={row.text_rank:.6f} "
+            f"trigram_similarity={row.trigram_similarity:.6f} "
+            f"vector_similarity={row.vector_similarity:.6f} "
+            f"external_id={row.external_id}"
+        )
+        for row in result.results
+    )
+    lines.append(
+        f"Plan: root_node={result.plan.root_node_type} "
+        f"indexes={','.join(result.plan.index_names)} "
+        f"planning_time_ms={result.plan.planning_time_ms} "
+        f"execution_time_ms={result.plan.execution_time_ms}"
+    )
+    return lines
+
+
+def run_hybrid_retrieval(args: Namespace) -> int:
+    result = run_hybrid_retrieval_smoke(
+        query=args.query,
+        fuzzy_query=args.fuzzy,
+        source_limit=args.source_limit,
+        candidate_limit=args.candidate_limit,
+        result_limit=args.limit,
+    )
+    for line in format_hybrid_retrieval_smoke(result):
+        print(line)
+
+    if not result.results:
+        return 1
+
+    search_indexes = {SEARCH_VECTOR_INDEX_NAME, TRIGRAM_INDEX_NAME}
+    if VECTOR_INDEX_NAME not in result.plan.index_names:
+        return 1
+    if not search_indexes.intersection(result.plan.index_names):
+        return 1
+
+    return 0
+
+
 def format_queue_smoke(result: QueueSmokeResult) -> list[str]:
     lines = [
         "QueueDB Smoke",
@@ -931,6 +1001,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "feature-store-smoke":
         return run_feature_store(args)
+
+    if args.command == "hybrid-retrieval-smoke":
+        return run_hybrid_retrieval(args)
 
     if args.command == "queue-smoke":
         return run_queue_jobs()
