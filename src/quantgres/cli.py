@@ -9,6 +9,7 @@ from quantgres.experiments.binance_candles import (
     fetch_and_store_binance_klines,
 )
 from quantgres.experiments.bnb_block_timestamps import (
+    BlockFetchPolicy,
     BnbBlockTimestampSmokeResult,
     run_bnb_block_timestamp_smoke,
 )
@@ -172,6 +173,8 @@ def build_parser() -> ArgumentParser:
     bnb_block_timestamp.add_argument("--to-block", default=str(PANCAKESWAP_SAMPLE_BLOCK))
     bnb_block_timestamp.add_argument("--address", default=PANCAKESWAP_V2_WBNB_USDT_PAIR)
     bnb_block_timestamp.add_argument("--topic0", default=PANCAKESWAP_V2_SWAP_TOPIC0)
+    bnb_block_timestamp.add_argument("--block-fetch-attempts", type=int, default=3)
+    bnb_block_timestamp.add_argument("--block-fetch-retry-sleep", type=float, default=0.25)
 
     jsonb_smoke = subparsers.add_parser(
         "jsonb-document-smoke",
@@ -563,12 +566,15 @@ def format_bnb_block_timestamp(result: BnbBlockTimestampSmokeResult) -> list[str
         "BNB Block Timestamp Smoke",
         f"Raw logs fetched: {result.swap_projection.ingestion.rows_fetched}",
         f"Projected swaps: {result.swap_projection.projected_events}",
-        f"Fetched blocks: {len(result.fetched_blocks)}",
+        f"Requested blocks: {len(result.requested_block_numbers)}",
+        f"Cached blocks: {len(result.cached_block_numbers)}",
+        f"Missing blocks: {len(result.missing_block_numbers)}",
+        f"Fetched missing blocks: {len(result.fetched_blocks)}",
         f"Upserted blocks: {result.upserted_blocks}",
         f"Updated swaps: {result.updated_swaps}",
         f"Stored blocks: {result.stored_blocks}",
         f"Enriched swaps: {result.enriched_swaps}",
-        "Blocks:",
+        "Fetched blocks:",
     ]
     lines.extend(
         (f"- block={block.block_number} timestamp={block.block_timestamp} hash={block.block_hash}")
@@ -594,11 +600,15 @@ def run_bnb_block_timestamp(args: Namespace) -> int:
         to_block=parse_bnb_block_arg(args.to_block),
         pair_address=args.address,
         topic0=args.topic0,
+        block_fetch_policy=BlockFetchPolicy(
+            max_attempts=args.block_fetch_attempts,
+            retry_sleep_seconds=args.block_fetch_retry_sleep,
+        ),
     )
     for line in format_bnb_block_timestamp(result):
         print(line)
 
-    if not result.fetched_blocks or result.stored_blocks == 0:
+    if not result.requested_block_numbers or result.stored_blocks == 0:
         return 1
     if result.enriched_swaps == 0 or not result.sample_events:
         return 1

@@ -23,6 +23,26 @@ Swap events are enriched in:
 
 - `defi.swap_events.block_timestamp`
 
+## Backfill Policy
+
+For larger ranges, the smoke treats `onchain.blocks` as a local metadata cache:
+
+- collect distinct swap block numbers from `defi.swap_events`
+- reuse block numbers already stored in `onchain.blocks`
+- fetch only missing blocks with `eth_getBlockByNumber`
+- retry each missing block with a bounded retry policy
+- fail loudly with block number, attempt count, and error type when retries are
+  exhausted
+
+The default retry policy is intentionally small: three attempts with short
+linear backoff. It protects against transient public RPC failures without hiding
+provider instability or turning a smoke run into an unbounded crawler.
+
+CLI options:
+
+- `--block-fetch-attempts`: maximum attempts per missing block, default `3`
+- `--block-fetch-retry-sleep`: base backoff seconds, default `0.25`
+
 ## Time Semantics
 
 `eth_getBlockByNumber` returns the block `timestamp` as a hex quantity Unix
@@ -44,6 +64,8 @@ Expected behavior:
 
 - Fetches and projects the real PancakeSwap sample swap logs.
 - Fetches the corresponding BNB block metadata.
+- Skips block metadata that is already cached in `onchain.blocks`.
 - Stores the block timestamp in `onchain.blocks`.
 - Updates `defi.swap_events.block_timestamp`.
-- Prints sample enriched swap events.
+- Prints requested, cached, missing, fetched, stored, and enriched counts plus
+  sample enriched swap events.
