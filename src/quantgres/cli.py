@@ -32,6 +32,9 @@ from quantgres.experiments.embedding_comparison import (
     EmbeddingComparisonSmokeResult,
     run_embedding_comparison_smoke,
 )
+from quantgres.experiments.embedding_comparison import (
+    run_vector_retrieval_benchmark as run_vector_retrieval_benchmark_report,
+)
 from quantgres.experiments.event_store import EventStoreSmokeResult, run_event_store_smoke
 from quantgres.experiments.feature_batches import (
     BATCH_ASOF_INDEX_NAME,
@@ -216,6 +219,15 @@ def build_parser() -> ArgumentParser:
     embedding_comparison.add_argument("--model-name", default=DEFAULT_FASTEMBED_MODEL)
     embedding_comparison.add_argument("--source-limit", type=int, default=100)
     embedding_comparison.add_argument("--limit", type=int, default=5)
+
+    vector_retrieval_benchmark = subparsers.add_parser(
+        "vector-retrieval-benchmark",
+        help="Generate a VectorDB retrieval comparison benchmark report.",
+    )
+    vector_retrieval_benchmark.add_argument("--query", default="pancakeswap swap bnb chain")
+    vector_retrieval_benchmark.add_argument("--model-name", default=DEFAULT_FASTEMBED_MODEL)
+    vector_retrieval_benchmark.add_argument("--source-limit", type=int, default=100)
+    vector_retrieval_benchmark.add_argument("--limit", type=int, default=5)
 
     cache_summary = subparsers.add_parser(
         "cache-summary-smoke",
@@ -848,6 +860,24 @@ def run_embedding_comparison(args: Namespace) -> int:
     return 0
 
 
+def run_vector_retrieval_benchmark(args: Namespace) -> int:
+    result = run_vector_retrieval_benchmark_report(
+        query=args.query,
+        model_name=args.model_name,
+        source_limit=args.source_limit,
+        result_limit=args.limit,
+    )
+    print(f"JSON report: {result.report.json_path}")
+    print(f"Markdown report: {result.report.markdown_path}")
+
+    if not result.comparison.model_results:
+        return 1
+    if MODEL_VECTOR_INDEX_NAME not in result.comparison.plan.index_names:
+        return 1
+
+    return 0
+
+
 def format_cache_summary_smoke(result: CacheSummarySmokeResult) -> list[str]:
     summary = result.selected_summary
     metrics = summary.metrics
@@ -1324,6 +1354,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "embedding-comparison-smoke":
         return run_embedding_comparison(args)
+
+    if args.command == "vector-retrieval-benchmark":
+        return run_vector_retrieval_benchmark(args)
 
     if args.command == "cache-summary-smoke":
         return run_cache_summary(args)

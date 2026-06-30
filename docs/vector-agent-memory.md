@@ -120,3 +120,26 @@ Expected behavior:
 
 The first real embedding run may need network access to download the public
 model files.
+
+## Benchmark Report
+
+The retrieval benchmark wraps the same real-data path and writes local JSON and
+Markdown evidence under `reports/generated/vector/`:
+
+```powershell
+uv run quantgres vector-retrieval-benchmark --query "pancakeswap swap bnb chain" --source-limit 20 --limit 5
+```
+
+The report records:
+
+- deterministic hash top-k results
+- real fastembed top-k results
+- top-k overlap count
+- projected and total chunk counts
+- embedding model and dimensions
+- PostgreSQL runtime metadata
+- deterministic and real embedding pgvector plan summaries
+
+Use this report as retrieval evidence, not as a universal latency claim. Small
+local datasets can make absolute timings noisy; the stable evidence is the query
+shape, index usage, result set, overlap, runtime version, and exact parameters.

@@ -5,6 +5,7 @@ from quantgres.experiments.embedding_comparison import (
     FASTEMBED_MODEL_DIMENSIONS,
     MODEL_VECTOR_INDEX_NAME,
     EmbeddingComparisonSmokeResult,
+    VectorRetrievalBenchmarkResult,
 )
 from quantgres.experiments.rdb_trading_ledger import (
     CashBalanceRow,
@@ -22,6 +23,7 @@ from quantgres.experiments.vector_memory import (
     VectorMemorySmokeResult,
     VectorPlanSummary,
 )
+from quantgres.reports import WrittenReport
 from quantgres.runtime import DatabaseRuntimeInfo, ExtensionStatus
 
 
@@ -217,3 +219,55 @@ def test_embedding_comparison_smoke_prints_model_summary(monkeypatch, capsys):
     assert "Model: BAAI/bge-small-en-v1.5" in output
     assert "Top overlap: 1/1 deterministic results" in output
     assert MODEL_VECTOR_INDEX_NAME in output
+
+
+def test_vector_retrieval_benchmark_prints_report_paths(monkeypatch, capsys, tmp_path):
+    plan = VectorPlanSummary(
+        root_node_type="Limit",
+        index_names=(MODEL_VECTOR_INDEX_NAME,),
+        planning_time_ms=0.1,
+        execution_time_ms=0.2,
+    )
+    deterministic_result = MemorySearchResult(
+        source="bnb_rpc_log",
+        external_id="tx-1",
+        title="BNB Chain PancakeSwap swap log",
+        preview="bnb chain pancakeswap swap rpc log",
+        cosine_similarity=0.9,
+    )
+    result = EmbeddingComparisonSmokeResult(
+        vector_projection=VectorMemorySmokeResult(
+            projected_chunks=1,
+            total_chunks=1,
+            query_text="pancakeswap swap bnb chain",
+            results=(deterministic_result,),
+            plan=plan,
+        ),
+        embedding_model="BAAI/bge-small-en-v1.5",
+        embedding_dimensions=FASTEMBED_MODEL_DIMENSIONS,
+        projected_model_chunks=1,
+        total_model_chunks=1,
+        query_text="pancakeswap swap bnb chain",
+        deterministic_results=(deterministic_result,),
+        model_results=(deterministic_result,),
+        top_overlap_count=1,
+        plan=plan,
+    )
+    monkeypatch.setattr(
+        "quantgres.cli.run_vector_retrieval_benchmark_report",
+        lambda **_: VectorRetrievalBenchmarkResult(
+            comparison=result,
+            report=WrittenReport(
+                json_path=tmp_path / "report.json",
+                markdown_path=tmp_path / "report.md",
+            ),
+        ),
+    )
+
+    exit_code = main(["vector-retrieval-benchmark", "--source-limit", "1", "--limit", "1"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "JSON report:" in output
+    assert "Markdown report:" in output

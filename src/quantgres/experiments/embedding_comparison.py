@@ -1,14 +1,17 @@
 import importlib
+import json
 import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, SupportsFloat, cast
+from typing import Any, Protocol, SupportsFloat, cast
 
 from psycopg.types.json import Jsonb
 
 from quantgres.db import connect, query_text
 from quantgres.experiments.vector_memory import (
+    SIMILARITY_SEARCH_SQL,
     MemorySearchResult,
     SearchDocumentForMemory,
     VectorMemorySmokeResult,
@@ -19,6 +22,8 @@ from quantgres.experiments.vector_memory import (
     summarize_vector_plan,
     vector_literal,
 )
+from quantgres.reports import WrittenReport, default_generated_reports_dir
+from quantgres.runtime import DatabaseRuntimeInfo, load_runtime_info
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MEMORY_SQL_DIR = PROJECT_ROOT / "sql" / "memory"
@@ -104,6 +109,12 @@ class EmbeddingComparisonSmokeResult:
     model_results: tuple[MemorySearchResult, ...]
     top_overlap_count: int
     plan: VectorPlanSummary
+
+
+@dataclass(frozen=True)
+class VectorRetrievalBenchmarkResult:
+    comparison: EmbeddingComparisonSmokeResult
+    report: WrittenReport
 
 
 def read_sql(path: Path) -> str:
@@ -300,6 +311,264 @@ def count_top_overlap(
     baseline_keys = {memory_result_key(result) for result in baseline_results}
     model_keys = {memory_result_key(result) for result in model_results}
     return len(baseline_keys.intersection(model_keys))
+
+
+def memory_result_to_dict(result: MemorySearchResult, *, rank: int) -> dict[str, object]:
+    return {
+        "rank": rank,
+        "source": result.source,
+        "external_id": result.external_id,
+        "title": result.title,
+        "preview": result.preview,
+        "cosine_similarity": result.cosine_similarity,
+    }
+
+
+def plan_summary_to_dict(plan: VectorPlanSummary) -> dict[str, object]:
+    return {
+        "root_node_type": plan.root_node_type,
+        "index_names": list(plan.index_names),
+        "planning_time_ms": plan.planning_time_ms,
+        "execution_time_ms": plan.execution_time_ms,
+    }
+
+
+def runtime_to_dict(runtime: DatabaseRuntimeInfo) -> dict[str, object]:
+    return {
+        "server_version": runtime.server_version,
+        "server_version_num": runtime.server_version_num,
+        "database_name": runtime.database_name,
+        "user_name": runtime.user_name,
+        "extensions": [
+            {"name": extension.name, "version": extension.version}
+            for extension in runtime.extensions
+        ],
+    }
+
+
+def build_vector_retrieval_report(
+    *,
+    comparison: EmbeddingComparisonSmokeResult,
+    runtime: DatabaseRuntimeInfo,
+    source_limit: int,
+    result_limit: int,
+    generated_at: datetime | None = None,
+) -> dict[str, Any]:
+    generated = generated_at or datetime.now(UTC)
+    return {
+        "title": "VectorDB Retrieval Benchmark",
+        "slug": "vector-retrieval-benchmark",
+        "generated_at": generated.isoformat(),
+        "track": "Vector DB / pgvector Agent Memory",
+        "query_name": "deterministic hash vs fastembed cosine retrieval",
+        "parameters": {
+            "query": comparison.query_text,
+            "source_limit": source_limit,
+            "result_limit": result_limit,
+            "embedding_model": comparison.embedding_model,
+            "embedding_dimensions": comparison.embedding_dimensions,
+        },
+        "schema_files": [
+            "sql/memory/001_agent_memory_schema.sql",
+            "sql/memory/002_agent_memory_model_chunks.sql",
+        ],
+        "queries": {
+            "deterministic_hash": SIMILARITY_SEARCH_SQL,
+            "real_embedding": MODEL_SIMILARITY_SEARCH_SQL,
+        },
+        "dataset_sizes": {
+            "deterministic_projected_chunks": comparison.vector_projection.projected_chunks,
+            "deterministic_total_chunks": comparison.vector_projection.total_chunks,
+            "model_projected_chunks": comparison.projected_model_chunks,
+            "model_total_chunks": comparison.total_model_chunks,
+        },
+        "retrieval": {
+            "top_overlap_count": comparison.top_overlap_count,
+            "deterministic_result_count": len(comparison.deterministic_results),
+            "model_result_count": len(comparison.model_results),
+            "deterministic_results": [
+                memory_result_to_dict(result, rank=rank)
+                for rank, result in enumerate(comparison.deterministic_results, start=1)
+            ],
+            "model_results": [
+                memory_result_to_dict(result, rank=rank)
+                for rank, result in enumerate(comparison.model_results, start=1)
+            ],
+        },
+        "plan_summary": {
+            "deterministic_hash": plan_summary_to_dict(comparison.vector_projection.plan),
+            "real_embedding": plan_summary_to_dict(comparison.plan),
+        },
+        "postgresql": runtime_to_dict(runtime),
+        "interpretation": (
+            "This benchmark records retrieval evidence for the same real SearchDB "
+            "documents projected into two pgvector tables. The deterministic hash "
+            "embedding is a reproducible baseline for schema and operator mechanics; "
+            "the fastembed projection is a local CPU semantic embedding comparison. "
+            "Small local datasets can make absolute timings noisy, so compare result "
+            "sets, overlap, plan shape, and index usage before treating timing as a "
+            "performance claim."
+        ),
+    }
+
+
+def markdown_cell(value: object) -> str:
+    return str(value).replace("\n", " ").replace("|", "\\|")
+
+
+def append_result_table(lines: list[str], results: Sequence[dict[str, Any]]) -> None:
+    lines.extend(
+        [
+            "| Rank | Source | Title | Similarity | External ID |",
+            "|---:|---|---|---:|---|",
+        ]
+    )
+    for result in results:
+        lines.append(
+            "| "
+            f"{result['rank']} | "
+            f"`{markdown_cell(result['source'])}` | "
+            f"{markdown_cell(result['title'])} | "
+            f"{float(result['cosine_similarity']):.6f} | "
+            f"`{markdown_cell(result['external_id'])}` |"
+        )
+
+
+def build_vector_retrieval_markdown(report: dict[str, Any]) -> str:
+    parameters = report["parameters"]
+    dataset_sizes = report["dataset_sizes"]
+    retrieval = report["retrieval"]
+    plan_summary = report["plan_summary"]
+
+    lines = [
+        f"# {report['title']}",
+        "",
+        f"- Generated at: `{report['generated_at']}`",
+        f"- Track: `{report['track']}`",
+        f"- Query: `{parameters['query']}`",
+        f"- Embedding model: `{parameters['embedding_model']}`",
+        f"- Embedding dimensions: `{parameters['embedding_dimensions']}`",
+        f"- PostgreSQL: `{report['postgresql']['server_version']}`",
+        "",
+        "## Dataset",
+        "",
+        f"- Source limit: `{parameters['source_limit']}`",
+        f"- Result limit: `{parameters['result_limit']}`",
+    ]
+
+    for name, row_count in dataset_sizes.items():
+        lines.append(f"- `{name}`: {row_count}")
+
+    lines.extend(
+        [
+            "",
+            "## Retrieval Comparison",
+            "",
+            (
+                f"- Top overlap: `{retrieval['top_overlap_count']}/"
+                f"{retrieval['deterministic_result_count']} deterministic results`"
+            ),
+            "",
+            "### Deterministic Hash Results",
+            "",
+        ]
+    )
+    append_result_table(lines, retrieval["deterministic_results"])
+
+    lines.extend(["", "### Real Embedding Results", ""])
+    append_result_table(lines, retrieval["model_results"])
+
+    lines.extend(
+        [
+            "",
+            "## Plan Summary",
+            "",
+            "| Path | Root node | Index names | Planning ms | Execution ms |",
+            "|---|---|---|---:|---:|",
+        ]
+    )
+
+    for path_name, plan in plan_summary.items():
+        lines.append(
+            "| "
+            f"`{path_name}` | "
+            f"`{plan['root_node_type']}` | "
+            f"`{', '.join(plan['index_names'])}` | "
+            f"{plan['planning_time_ms']} | "
+            f"{plan['execution_time_ms']} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Query",
+            "",
+            "### Deterministic Hash",
+            "",
+            "```sql",
+            report["queries"]["deterministic_hash"].strip(),
+            "```",
+            "",
+            "### Real Embedding",
+            "",
+            "```sql",
+            report["queries"]["real_embedding"].strip(),
+            "```",
+            "",
+            "## Interpretation",
+            "",
+            report["interpretation"],
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def json_default(value: object) -> str:
+    if isinstance(value, datetime | Path):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def write_vector_retrieval_report(report: dict[str, Any], output_dir: Path) -> WrittenReport:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "vector-retrieval-benchmark.json"
+    markdown_path = output_dir / "vector-retrieval-benchmark.md"
+
+    json_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, default=json_default),
+        encoding="utf-8",
+    )
+    markdown_path.write_text(build_vector_retrieval_markdown(report), encoding="utf-8")
+
+    return WrittenReport(json_path=json_path, markdown_path=markdown_path)
+
+
+def run_vector_retrieval_benchmark(
+    *,
+    query: str = "pancakeswap swap bnb chain",
+    model_name: str = DEFAULT_FASTEMBED_MODEL,
+    source_limit: int = 100,
+    result_limit: int = 5,
+    output_dir: Path | None = None,
+    database_url: str | None = None,
+) -> VectorRetrievalBenchmarkResult:
+    comparison = run_embedding_comparison_smoke(
+        query=query,
+        model_name=model_name,
+        source_limit=source_limit,
+        result_limit=result_limit,
+        database_url=database_url,
+    )
+    report = build_vector_retrieval_report(
+        comparison=comparison,
+        runtime=load_runtime_info(database_url),
+        source_limit=source_limit,
+        result_limit=result_limit,
+    )
+    report_dir = output_dir or (default_generated_reports_dir() / "vector")
+    written = write_vector_retrieval_report(report, report_dir)
+    return VectorRetrievalBenchmarkResult(comparison=comparison, report=written)
 
 
 def run_embedding_comparison_smoke(
