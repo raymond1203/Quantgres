@@ -45,6 +45,28 @@ LIMIT 1
 The claim happens inside an `UPDATE ... FROM next_job ... RETURNING` statement
 so the selected row immediately moves to `running`.
 
+## Worker Execution
+
+`queue-smoke` verifies queue state transitions. `queue-worker-smoke` goes one
+step further and executes real ingestion payloads after claiming jobs.
+
+The worker smoke uses an idempotency prefix:
+
+- `worker:ingestion:{run_key}:`
+
+This keeps the worker from claiming benchmark jobs, manual fixtures, or other
+available queue rows. The current worker dispatch table is intentionally small:
+
+- `binance_klines`: fetches Binance public klines and stores them in
+  `time_series.candles_1m`
+- `bnb_block_timestamp`: projects PancakeSwap swap logs, reuses cached
+  `onchain.blocks` rows, fetches missing block timestamps, and enriches
+  `defi.swap_events`
+
+Successful jobs are marked `completed`. Failed jobs go through the existing
+`failed` or `dead_letter` status transition based on `attempts` and
+`max_attempts`.
+
 ## Verification
 
 ```powershell
@@ -61,3 +83,18 @@ Expected behavior:
 
 This smoke uses real PostgreSQL row state transitions. It does not use an
 external queue service.
+
+Run the worker execution smoke:
+
+```powershell
+uv run quantgres queue-worker-smoke --run-key default
+```
+
+Expected behavior:
+
+- Seeds one Binance kline job and one BNB block timestamp job under the worker
+  prefix.
+- Claims each job with `FOR UPDATE SKIP LOCKED`.
+- Executes the real ingestion payload.
+- Marks both jobs `completed`.
+- Prints execution summaries and final queue statuses.
