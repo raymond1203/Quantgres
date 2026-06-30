@@ -96,6 +96,7 @@ uv run quantgres benchmark-jsonb-indexes --symbol BTCUSDT --binance-limit 500
 uv run quantgres search-document-smoke --query "pancakeswap swap" --fuzzy 0x16b9a82891338f9b --limit 5
 uv run quantgres vector-memory-smoke --query "pancakeswap swap bnb chain"
 uv run quantgres cache-summary-smoke
+uv run quantgres olap-return-panel-smoke
 uv run quantgres queue-smoke
 ```
 

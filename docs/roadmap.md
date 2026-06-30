@@ -64,6 +64,11 @@ The first CacheDB track uses a materialized view for repeated summary lookup:
 `cache.market_onchain_summary` -> indexed summary read compared with a base
 aggregate query.
 
+The first OLAP track builds an analytics panel with window functions:
+`time_series.candles_1m` plus `defi.swap_events` ->
+`analytics.market_return_panel` -> return bps, rolling return, and swap
+aggregate metrics.
+
 ## Phase 2: Backend System Patterns
 
 5. Search DB / Full-Text, Trigram, Hybrid Search
