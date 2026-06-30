@@ -32,3 +32,7 @@ CREATE INDEX IF NOT EXISTS ingestion_jobs_claim_idx
 
 CREATE INDEX IF NOT EXISTS ingestion_jobs_status_updated_at_idx
     ON queue.ingestion_jobs (status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS ingestion_jobs_running_locked_at_idx
+    ON queue.ingestion_jobs (locked_at, job_id)
+    WHERE status = 'running';

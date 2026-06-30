@@ -194,6 +194,63 @@ WHERE job_id = %(job_id)s
 RETURNING job_id, status
 """
 
+HEARTBEAT_JOB_SQL = """
+UPDATE queue.ingestion_jobs
+SET locked_at = now(),
+    updated_at = now()
+WHERE job_id = %(job_id)s
+  AND status = 'running'
+  AND locked_by = %(worker_id)s
+RETURNING job_id
+"""
+
+AGE_RUNNING_LOCK_SQL = """
+UPDATE queue.ingestion_jobs
+SET locked_at = now() - (%(age_seconds)s::text || ' seconds')::interval,
+    updated_at = now()
+WHERE job_id = %(job_id)s
+  AND status = 'running'
+RETURNING job_id
+"""
+
+RECOVER_STALE_JOBS_SQL = """
+WITH stale_jobs AS (
+    SELECT job_id
+    FROM queue.ingestion_jobs
+    WHERE status = 'running'
+      AND locked_at IS NOT NULL
+      AND locked_at < now() - (%(timeout_seconds)s::text || ' seconds')::interval
+      AND (%(prefix)s::text IS NULL OR idempotency_key LIKE %(prefix)s)
+    ORDER BY locked_at, job_id
+    FOR UPDATE SKIP LOCKED
+    LIMIT %(limit)s
+)
+UPDATE queue.ingestion_jobs AS job
+SET status = CASE
+        WHEN job.attempts >= job.max_attempts THEN 'dead_letter'
+        ELSE 'failed'
+    END,
+    available_at = CASE
+        WHEN job.attempts >= job.max_attempts THEN job.available_at
+        ELSE now()
+    END,
+    locked_at = NULL,
+    locked_by = NULL,
+    last_error = %(error)s,
+    updated_at = now()
+FROM stale_jobs
+WHERE job.job_id = stale_jobs.job_id
+RETURNING
+    job.job_id,
+    job.job_kind,
+    job.idempotency_key,
+    job.status,
+    job.attempts,
+    job.max_attempts,
+    job.locked_by,
+    job.last_error
+"""
+
 JOB_STATUS_SQL = """
 SELECT
     job_kind,
@@ -301,6 +358,32 @@ class QueueWorkerSmokeResult:
     worker_id: str
     seeded_jobs: int
     executions: tuple[QueueWorkerExecution, ...]
+    statuses: tuple[QueueJobStatus, ...]
+
+
+@dataclass(frozen=True)
+class QueueRecoveredJob:
+    job_id: int
+    job_kind: str
+    idempotency_key: str
+    status: str
+    attempts: int
+    max_attempts: int
+    locked_by: str | None
+    last_error: str | None
+
+
+@dataclass(frozen=True)
+class QueueStaleLockSmokeResult:
+    run_key: str
+    stale_worker_id: str
+    recovery_worker_id: str
+    stale_timeout_seconds: int
+    first_claim: QueueJob
+    heartbeat_updated: bool
+    recovered_jobs: tuple[QueueRecoveredJob, ...]
+    reclaimed_job: QueueJob
+    reclaimed_execution: QueueWorkerExecution
     statuses: tuple[QueueJobStatus, ...]
 
 
@@ -461,6 +544,19 @@ def row_to_job(row: tuple[Any, ...]) -> QueueJob:
     )
 
 
+def row_to_recovered_job(row: tuple[Any, ...]) -> QueueRecoveredJob:
+    return QueueRecoveredJob(
+        job_id=int(row[0]),
+        job_kind=str(row[1]),
+        idempotency_key=str(row[2]),
+        status=str(row[3]),
+        attempts=int(row[4]),
+        max_attempts=int(row[5]),
+        locked_by=None if row[6] is None else str(row[6]),
+        last_error=None if row[7] is None else str(row[7]),
+    )
+
+
 def job_to_benchmark_claim(job: QueueJob) -> QueueBenchmarkClaim:
     return QueueBenchmarkClaim(
         worker_id=job.locked_by,
@@ -572,6 +668,71 @@ def fail_job(
         raise RuntimeError(f"Could not fail running job {job_id}.")
 
     return str(row[1])
+
+
+def heartbeat_job(
+    *,
+    job_id: int,
+    worker_id: str,
+    database_url: str | None = None,
+) -> bool:
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            query_text(HEARTBEAT_JOB_SQL),
+            {
+                "job_id": job_id,
+                "worker_id": worker_id,
+            },
+        )
+        return cursor.fetchone() is not None
+
+
+def age_running_job_lock(
+    *,
+    job_id: int,
+    age_seconds: int,
+    database_url: str | None = None,
+) -> bool:
+    if age_seconds <= 0:
+        raise ValueError("age_seconds must be positive.")
+
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            query_text(AGE_RUNNING_LOCK_SQL),
+            {
+                "job_id": job_id,
+                "age_seconds": age_seconds,
+            },
+        )
+        return cursor.fetchone() is not None
+
+
+def recover_stale_jobs(
+    *,
+    timeout_seconds: int,
+    limit: int = 100,
+    prefix: str | None = None,
+    error: str | None = None,
+    database_url: str | None = None,
+) -> tuple[QueueRecoveredJob, ...]:
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive.")
+    if limit <= 0:
+        raise ValueError("limit must be positive.")
+
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            query_text(RECOVER_STALE_JOBS_SQL),
+            {
+                "timeout_seconds": timeout_seconds,
+                "limit": limit,
+                "prefix": None if prefix is None else prefix + "%",
+                "error": error or f"stale lock exceeded {timeout_seconds} seconds",
+            },
+        )
+        rows = cursor.fetchall()
+
+    return tuple(row_to_recovered_job(row) for row in rows)
 
 
 def load_job_statuses(database_url: str | None = None) -> tuple[QueueJobStatus, ...]:
@@ -754,6 +915,89 @@ def run_queue_worker_smoke(
         worker_id=worker_id,
         seeded_jobs=seeded_jobs,
         executions=tuple(executions),
+        statuses=load_job_statuses_by_prefix(prefix=prefix, database_url=database_url),
+    )
+
+
+def run_queue_stale_lock_smoke(
+    *,
+    run_key: str = "default",
+    stale_worker_id: str = "worker-stale-1",
+    recovery_worker_id: str = "worker-recovery-1",
+    stale_timeout_seconds: int = 60,
+    stale_age_seconds: int = 120,
+    binance_limit: int = 5,
+    database_url: str | None = None,
+) -> QueueStaleLockSmokeResult:
+    if stale_age_seconds <= stale_timeout_seconds:
+        raise ValueError("stale_age_seconds must be greater than stale_timeout_seconds.")
+
+    seed_queue_worker_jobs(
+        run_key=run_key,
+        binance_limit=binance_limit,
+        database_url=database_url,
+    )
+    prefix = worker_prefix(run_key)
+    first_claim = claim_job_by_prefix(
+        worker_id=stale_worker_id,
+        prefix=prefix,
+        database_url=database_url,
+    )
+    if first_claim is None:
+        raise RuntimeError("Expected stale-lock smoke to claim a worker job.")
+
+    heartbeat_updated = heartbeat_job(
+        job_id=first_claim.job_id,
+        worker_id=stale_worker_id,
+        database_url=database_url,
+    )
+    aged = age_running_job_lock(
+        job_id=first_claim.job_id,
+        age_seconds=stale_age_seconds,
+        database_url=database_url,
+    )
+    if not aged:
+        raise RuntimeError(f"Could not age running lock for job {first_claim.job_id}.")
+
+    recovered_jobs = recover_stale_jobs(
+        timeout_seconds=stale_timeout_seconds,
+        prefix=prefix,
+        error=f"stale lock recovered after {stale_timeout_seconds} seconds",
+        database_url=database_url,
+    )
+    recovered_ids = {job.job_id for job in recovered_jobs}
+    if first_claim.job_id not in recovered_ids:
+        raise RuntimeError(f"Expected job {first_claim.job_id} to be recovered.")
+
+    reclaimed_job = claim_job_by_prefix(
+        worker_id=recovery_worker_id,
+        prefix=prefix,
+        database_url=database_url,
+    )
+    if reclaimed_job is None:
+        raise RuntimeError("Expected recovery worker to reclaim the stale job.")
+    if reclaimed_job.job_id != first_claim.job_id:
+        raise RuntimeError(
+            f"Expected recovery worker to reclaim job {first_claim.job_id}, "
+            f"got {reclaimed_job.job_id}."
+        )
+
+    reclaimed_execution = run_claimed_job(
+        job=reclaimed_job,
+        worker_id=recovery_worker_id,
+        database_url=database_url,
+    )
+
+    return QueueStaleLockSmokeResult(
+        run_key=run_key,
+        stale_worker_id=stale_worker_id,
+        recovery_worker_id=recovery_worker_id,
+        stale_timeout_seconds=stale_timeout_seconds,
+        first_claim=first_claim,
+        heartbeat_updated=heartbeat_updated,
+        recovered_jobs=recovered_jobs,
+        reclaimed_job=reclaimed_job,
+        reclaimed_execution=reclaimed_execution,
         statuses=load_job_statuses_by_prefix(prefix=prefix, database_url=database_url),
     )
 

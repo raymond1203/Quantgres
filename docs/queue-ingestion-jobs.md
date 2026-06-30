@@ -69,6 +69,25 @@ Successful jobs are marked `completed`. Failed jobs go through the existing
 `failed` or `dead_letter` status transition based on `attempts` and
 `max_attempts`.
 
+## Heartbeat and Stale Lock Recovery
+
+Workers refresh ownership by updating `locked_at` while a row is still
+`running` and `locked_by` matches the worker id. This uses the existing lock
+columns instead of adding a separate heartbeat table.
+
+If a worker dies after claiming a job, the row can remain `running`. Stale
+recovery treats `locked_at` as the freshness timestamp:
+
+- only `status='running'` rows with old `locked_at` values are recovered
+- `attempts >= max_attempts` moves the job to `dead_letter`
+- jobs with retry room move to `failed` and become immediately claimable
+- `locked_at` and `locked_by` are cleared so the next worker owns the retry
+- `last_error` records the stale-lock recovery reason
+
+This intentionally consumes the attempt that was already incremented at claim
+time. A worker that claimed a row and then disappeared has started an execution
+attempt from the queue's point of view.
+
 ## Verification
 
 ```powershell
@@ -100,3 +119,20 @@ Expected behavior:
 - Executes the real ingestion payload.
 - Marks both jobs `completed`.
 - Prints execution summaries and final queue statuses.
+
+Run stale-lock recovery smoke:
+
+```powershell
+uv run quantgres queue-stale-lock-smoke --run-key default
+```
+
+Expected behavior:
+
+- Seeds real worker ingestion jobs under the worker prefix.
+- Claims one job as a stale worker.
+- Updates heartbeat on the running row.
+- Ages that dedicated row to simulate a worker crash without sleeping.
+- Recovers the stale lock into `failed`.
+- Lets a recovery worker reclaim the same job and execute the real ingestion
+  payload.
+- Prints recovered rows, reclaimed execution summary, and final statuses.

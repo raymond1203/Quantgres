@@ -68,9 +68,11 @@ from quantgres.experiments.olap_return_panel import (
 from quantgres.experiments.queue_jobs import (
     QueueBenchmarkResult,
     QueueSmokeResult,
+    QueueStaleLockSmokeResult,
     QueueWorkerSmokeResult,
     run_queue_benchmark_smoke,
     run_queue_smoke,
+    run_queue_stale_lock_smoke,
     run_queue_worker_smoke,
 )
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
@@ -301,6 +303,17 @@ def build_parser() -> ArgumentParser:
     queue_worker.add_argument("--run-key", default="default")
     queue_worker.add_argument("--worker-id", default="worker-exec-1")
     queue_worker.add_argument("--binance-limit", type=int, default=5)
+
+    queue_stale_lock = subparsers.add_parser(
+        "queue-stale-lock-smoke",
+        help="Recover a stale running QueueDB job and let another worker reclaim it.",
+    )
+    queue_stale_lock.add_argument("--run-key", default="default")
+    queue_stale_lock.add_argument("--stale-worker-id", default="worker-stale-1")
+    queue_stale_lock.add_argument("--recovery-worker-id", default="worker-recovery-1")
+    queue_stale_lock.add_argument("--stale-timeout-seconds", type=int, default=60)
+    queue_stale_lock.add_argument("--stale-age-seconds", type=int, default=120)
+    queue_stale_lock.add_argument("--binance-limit", type=int, default=5)
 
     return parser
 
@@ -1303,6 +1316,83 @@ def run_queue_worker(args: Namespace) -> int:
     return 0
 
 
+def format_queue_stale_lock_smoke(result: QueueStaleLockSmokeResult) -> list[str]:
+    lines = [
+        "QueueDB Stale Lock Smoke",
+        f"Run key: {result.run_key}",
+        f"Stale worker: {result.stale_worker_id}",
+        f"Recovery worker: {result.recovery_worker_id}",
+        f"Stale timeout seconds: {result.stale_timeout_seconds}",
+        (
+            f"First claim: job={result.first_claim.idempotency_key} "
+            f"attempts={result.first_claim.attempts}/{result.first_claim.max_attempts} "
+            f"locked_by={result.first_claim.locked_by}"
+        ),
+        f"Heartbeat updated: {result.heartbeat_updated}",
+        f"Recovered jobs: {len(result.recovered_jobs)}",
+    ]
+    lines.extend(
+        (
+            f"- {job.idempotency_key} "
+            f"status={job.status} "
+            f"attempts={job.attempts}/{job.max_attempts} "
+            f"locked_by={job.locked_by} "
+            f"last_error={job.last_error}"
+        )
+        for job in result.recovered_jobs
+    )
+    lines.extend(
+        [
+            (
+                f"Reclaimed job: {result.reclaimed_job.idempotency_key} "
+                f"attempts={result.reclaimed_job.attempts}/"
+                f"{result.reclaimed_job.max_attempts} "
+                f"locked_by={result.reclaimed_job.locked_by}"
+            ),
+            (
+                f"Reclaimed execution: status={result.reclaimed_execution.final_status} "
+                f"summary={result.reclaimed_execution.summary}"
+            ),
+            "Final statuses:",
+        ]
+    )
+    lines.extend(
+        (
+            f"- {status.idempotency_key} "
+            f"status={status.status} "
+            f"attempts={status.attempts}/{status.max_attempts} "
+            f"locked_by={status.locked_by} "
+            f"last_error={status.last_error}"
+        )
+        for status in result.statuses
+    )
+    return lines
+
+
+def run_queue_stale_lock(args: Namespace) -> int:
+    result = run_queue_stale_lock_smoke(
+        run_key=args.run_key,
+        stale_worker_id=args.stale_worker_id,
+        recovery_worker_id=args.recovery_worker_id,
+        stale_timeout_seconds=args.stale_timeout_seconds,
+        stale_age_seconds=args.stale_age_seconds,
+        binance_limit=args.binance_limit,
+    )
+    for line in format_queue_stale_lock_smoke(result):
+        print(line)
+
+    if not result.heartbeat_updated:
+        return 1
+    if not result.recovered_jobs:
+        return 1
+    if result.reclaimed_job.job_id != result.first_claim.job_id:
+        return 1
+    if result.reclaimed_execution.final_status != "completed":
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1384,6 +1474,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "queue-worker-smoke":
         return run_queue_worker(args)
+
+    if args.command == "queue-stale-lock-smoke":
+        return run_queue_stale_lock(args)
 
     parser.print_help()
     return 0
