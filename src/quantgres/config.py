@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from urllib.parse import urlsplit, urlunsplit
 
-DEFAULT_DATABASE_URL = "postgresql://quantgres:quantgres@localhost:5432/quantgres"
+DEFAULT_DATABASE_URL = "postgresql://quantgres:quantgres@localhost:55432/quantgres"
 
 
 @dataclass(frozen=True)
