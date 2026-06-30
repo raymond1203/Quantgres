@@ -5,10 +5,14 @@ from quantgres.experiments.feature_batches import (
     build_batch_config,
     build_batch_id,
     build_code_fingerprint,
+    build_dependency_fingerprint,
+    build_runtime_fingerprint,
     canonical_json_hash,
+    runtime_hash_material,
     summarize_plan,
 )
 from quantgres.experiments.feature_store import FeatureSourceRow
+from quantgres.runtime import DatabaseRuntimeInfo, ExtensionStatus
 
 
 def source_row(close_price: str) -> FeatureSourceRow:
@@ -79,6 +83,35 @@ def test_build_batch_id_changes_when_config_or_code_hash_changes():
     assert left != other
 
 
+def test_build_batch_id_changes_when_dependency_or_runtime_hash_changes():
+    row = source_row("10")
+
+    left = build_batch_id(
+        feature_set="market_return_v1",
+        run_key="default",
+        rows=(row,),
+        dependency_hash="dependency-a",
+        runtime_hash="runtime-a",
+    )
+    dependency_changed = build_batch_id(
+        feature_set="market_return_v1",
+        run_key="default",
+        rows=(row,),
+        dependency_hash="dependency-b",
+        runtime_hash="runtime-a",
+    )
+    runtime_changed = build_batch_id(
+        feature_set="market_return_v1",
+        run_key="default",
+        rows=(row,),
+        dependency_hash="dependency-a",
+        runtime_hash="runtime-b",
+    )
+
+    assert left != dependency_changed
+    assert left != runtime_changed
+
+
 def test_build_batch_config_normalizes_symbol():
     config = build_batch_config(
         symbol="btcusdt",
@@ -110,6 +143,56 @@ def test_build_code_fingerprint_hashes_file_content(tmp_path):
             "sha256": hashlib.sha256(second.read_bytes()).hexdigest(),
         },
     ]
+
+
+def test_build_dependency_fingerprint_hashes_lock_inputs(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    lockfile = tmp_path / "uv.lock"
+    pyproject.write_text("[project]\nname='q'\n", encoding="utf-8")
+    lockfile.write_text("version = 1\n", encoding="utf-8")
+
+    fingerprint = build_dependency_fingerprint((pyproject, lockfile))
+
+    assert len(str(fingerprint["dependency_hash"])) == 64
+    assert fingerprint["dependency_paths"] == [
+        {
+            "path": pyproject.as_posix(),
+            "sha256": hashlib.sha256(pyproject.read_bytes()).hexdigest(),
+        },
+        {
+            "path": lockfile.as_posix(),
+            "sha256": hashlib.sha256(lockfile.read_bytes()).hexdigest(),
+        },
+    ]
+
+
+def test_build_runtime_fingerprint_sorts_extensions_and_hash_excludes_user_database():
+    left = DatabaseRuntimeInfo(
+        server_version="PostgreSQL 18.4",
+        server_version_num=180004,
+        database_name="quantgres",
+        user_name="quantgres",
+        extensions=(
+            ExtensionStatus(name="vector", version="0.8.3"),
+            ExtensionStatus(name="pg_trgm", version="1.6"),
+        ),
+    )
+    right = DatabaseRuntimeInfo(
+        server_version="PostgreSQL 18.4",
+        server_version_num=180004,
+        database_name="other",
+        user_name="other",
+        extensions=(
+            ExtensionStatus(name="pg_trgm", version="1.6"),
+            ExtensionStatus(name="vector", version="0.8.3"),
+        ),
+    )
+
+    assert runtime_hash_material(left) == runtime_hash_material(right)
+    assert (
+        build_runtime_fingerprint(left)["runtime_hash"]
+        == build_runtime_fingerprint(right)["runtime_hash"]
+    )
 
 
 def test_summarize_plan_extracts_batch_asof_index():

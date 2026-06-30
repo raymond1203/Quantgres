@@ -25,6 +25,10 @@ includes:
 - `config_hash`: SHA-256 over canonical JSON execution config
 - `code_hash`: SHA-256 over the canonical list of related code and SQL file
   hashes
+- `dependency_hash`: SHA-256 over dependency and Python-version input file
+  hashes
+- `runtime_hash`: SHA-256 over PostgreSQL server version number and required
+  extension versions
 
 The batch metadata stores the human-readable material behind those hashes:
 
@@ -34,9 +38,16 @@ The batch metadata stores the human-readable material behind those hashes:
 - `code_hash`
 - `code_paths`: relative path and SHA-256 for each Python or SQL file used by
   the feature batch pipeline
+- `dependency_hash`
+- `dependency_paths`: relative path and SHA-256 for `pyproject.toml`,
+  `uv.lock`, and `.python-version`
+- `runtime_hash`
+- `runtime`: PostgreSQL version, database/user identity, and installed
+  required extension versions
 
 This means a run with identical feature rows but different generation code or
-execution settings produces a different batch id instead of silently reusing a
+execution settings, dependency lockfile, Python version, PostgreSQL version, or
+extension versions produces a different batch id instead of silently reusing a
 previous immutable batch.
 
 ## Verification
@@ -52,6 +63,6 @@ Expected behavior:
 - Refreshes the real OLAP source workflow.
 - Inserts or reuses an immutable feature batch.
 - Inserts typed batch items.
-- Records config and code fingerprints in batch metadata.
+- Records config, code, dependency, and runtime fingerprints in batch metadata.
 - Reads the latest item as of a timestamp within the batch.
 - Prints the as-of query plan and index names.
