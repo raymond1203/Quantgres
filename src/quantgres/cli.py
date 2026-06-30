@@ -82,8 +82,14 @@ from quantgres.experiments.rdb_paper_trace import (
 )
 from quantgres.experiments.rdb_trading_ledger import TradingLedgerSmokeResult, run_smoke
 from quantgres.experiments.search_documents import (
+    FULL_TEXT_INDEX_NAME,
+    SearchDocumentBenchmarkResult,
     SearchDocumentSmokeResult,
+    run_search_document_benchmark,
     run_search_document_smoke,
+)
+from quantgres.experiments.search_documents import (
+    TRIGRAM_INDEX_NAME as SEARCH_TRIGRAM_INDEX_NAME,
 )
 from quantgres.experiments.time_series_candles import CandleSmokeResult
 from quantgres.experiments.time_series_candles import run_smoke as run_candle_smoke
@@ -204,6 +210,17 @@ def build_parser() -> ArgumentParser:
     search_smoke.add_argument("--query", default="pancakeswap swap")
     search_smoke.add_argument("--fuzzy", default="0x16b9a82891338f9b")
     search_smoke.add_argument("--limit", type=int, default=5)
+
+    search_benchmark = subparsers.add_parser(
+        "search-document-benchmark",
+        help="Generate a larger-corpus SearchDB full-text/trigram benchmark report.",
+    )
+    search_benchmark.add_argument("--symbols", default="BTCUSDT,ETHUSDT,BNBUSDT")
+    search_benchmark.add_argument("--binance-limit", type=int, default=500)
+    search_benchmark.add_argument("--bnb-log-limit", type=int, default=25)
+    search_benchmark.add_argument("--query", default="binance kline market candle")
+    search_benchmark.add_argument("--fuzzy", default="0x16b9a82891338f9b")
+    search_benchmark.add_argument("--limit", type=int, default=5)
 
     vector_memory = subparsers.add_parser(
         "vector-memory-smoke",
@@ -766,6 +783,56 @@ def run_search_documents(args: Namespace) -> int:
         print(line)
 
     if not result.full_text_results or not result.trigram_results:
+        return 1
+
+    return 0
+
+
+def parse_symbol_list(value: str) -> tuple[str, ...]:
+    symbols = tuple(symbol.strip().upper() for symbol in value.split(",") if symbol.strip())
+    if not symbols:
+        raise ValueError("At least one symbol is required.")
+    return symbols
+
+
+def format_search_document_benchmark(result: SearchDocumentBenchmarkResult) -> list[str]:
+    return [
+        "SearchDB Larger Corpus Benchmark",
+        f"Symbols: {','.join(result.symbols)}",
+        f"Binance limit: {result.binance_limit}",
+        f"Binance rows fetched: {sum(item.rows_fetched for item in result.binance_ingestions)}",
+        f"Binance documents upserted: {result.binance_documents_upserted}",
+        f"BNB documents upserted: {result.bnb_documents_upserted}",
+        f"Projected documents: {result.projected_documents}",
+        f"Source counts: {dict(result.source_counts)}",
+        f"Full-text results: {len(result.full_text_results)}",
+        f"Trigram results: {len(result.trigram_results)}",
+        f"Full-text indexes: {','.join(result.full_text_plan.index_names)}",
+        f"Trigram indexes: {','.join(result.trigram_plan.index_names)}",
+        f"JSON report: {result.report.json_path}",
+        f"Markdown report: {result.report.markdown_path}",
+    ]
+
+
+def run_search_benchmark(args: Namespace) -> int:
+    result = run_search_document_benchmark(
+        symbols=parse_symbol_list(args.symbols),
+        binance_limit=args.binance_limit,
+        bnb_log_limit=args.bnb_log_limit,
+        full_text_query=args.query,
+        fuzzy_query=args.fuzzy,
+        result_limit=args.limit,
+    )
+    for line in format_search_document_benchmark(result):
+        print(line)
+
+    if not result.full_text_results:
+        return 1
+    if not result.trigram_results:
+        return 1
+    if FULL_TEXT_INDEX_NAME not in result.full_text_plan.index_names:
+        return 1
+    if SEARCH_TRIGRAM_INDEX_NAME not in result.trigram_plan.index_names:
         return 1
 
     return 0
@@ -1438,6 +1505,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "search-document-smoke":
         return run_search_documents(args)
+
+    if args.command == "search-document-benchmark":
+        return run_search_benchmark(args)
 
     if args.command == "vector-memory-smoke":
         return run_vector_memory(args)

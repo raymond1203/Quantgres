@@ -56,3 +56,25 @@ Expected behavior:
 
 Later loops can add hybrid keyword/vector retrieval and larger benchmark
 datasets.
+
+## Larger Corpus Benchmark
+
+Run:
+
+```powershell
+uv run quantgres search-document-benchmark --symbols BTCUSDT,ETHUSDT,BNBUSDT --binance-limit 200 --limit 5
+```
+
+Expected behavior:
+
+- Fetches Binance public klines for each requested symbol.
+- Projects those klines plus the PancakeSwap BNB log document into
+  `search.search_documents`.
+- Runs full-text search and trigram search.
+- Writes JSON and Markdown reports under `reports/generated/search/`.
+- Records source-level document counts, top results, PostgreSQL runtime, and
+  plan summaries with index names.
+
+The benchmark plan uses `enable_seqscan=off` to capture index-probe evidence for
+the GIN full-text and trigram indexes. Treat the report as reproducibility and
+index evidence, not as a production latency claim.

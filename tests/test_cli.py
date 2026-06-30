@@ -20,6 +20,16 @@ from quantgres.experiments.rdb_trading_ledger import (
     PositionRow,
     TradingLedgerSmokeResult,
 )
+from quantgres.experiments.search_documents import (
+    FULL_TEXT_INDEX_NAME,
+    SearchDocumentBenchmarkResult,
+    SearchPlanSummary,
+    SearchResultRow,
+    TrigramResultRow,
+)
+from quantgres.experiments.search_documents import (
+    TRIGRAM_INDEX_NAME as SEARCH_TRIGRAM_INDEX_NAME,
+)
 from quantgres.experiments.time_series_candles import (
     CandlePlanSummary,
     CandleRangeSummary,
@@ -353,3 +363,60 @@ def test_queue_stale_lock_smoke_prints_recovery_summary(monkeypatch, capsys):
     assert "Heartbeat updated: True" in output
     assert "Recovered jobs: 1" in output
     assert "Reclaimed execution: status=completed" in output
+
+
+def test_search_document_benchmark_prints_report_paths(monkeypatch, capsys, tmp_path):
+    result = SearchDocumentBenchmarkResult(
+        symbols=("BTCUSDT",),
+        binance_limit=200,
+        bnb_log_limit=25,
+        binance_ingestions=(),
+        binance_documents_upserted=200,
+        bnb_documents_upserted=2,
+        projected_documents=202,
+        source_counts=(("binance_kline", 200), ("bnb_rpc_log", 2)),
+        full_text_query="binance kline market candle",
+        fuzzy_query="0x16b9a82891338f9b",
+        full_text_results=(
+            SearchResultRow(
+                source="binance_kline",
+                external_id="BTCUSDT:1",
+                title="BTCUSDT Binance 1m kline",
+                score=Decimal("0.1"),
+            ),
+        ),
+        trigram_results=(
+            TrigramResultRow(
+                source="bnb_rpc_log",
+                external_id="56:tx:1",
+                fuzzy_key="0x16b9a82891338f9b",
+                score=0.9,
+            ),
+        ),
+        full_text_plan=SearchPlanSummary(
+            root_node_type="Limit",
+            planning_time_ms=0.1,
+            execution_time_ms=0.2,
+            index_names=(FULL_TEXT_INDEX_NAME,),
+        ),
+        trigram_plan=SearchPlanSummary(
+            root_node_type="Limit",
+            planning_time_ms=0.1,
+            execution_time_ms=0.2,
+            index_names=(SEARCH_TRIGRAM_INDEX_NAME,),
+        ),
+        report=WrittenReport(
+            json_path=tmp_path / "search.json",
+            markdown_path=tmp_path / "search.md",
+        ),
+    )
+    monkeypatch.setattr("quantgres.cli.run_search_document_benchmark", lambda **_: result)
+
+    exit_code = main(["search-document-benchmark", "--symbols", "BTCUSDT", "--limit", "5"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "SearchDB Larger Corpus Benchmark" in output
+    assert "JSON report:" in output
+    assert "Markdown report:" in output
