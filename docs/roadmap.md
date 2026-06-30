@@ -41,6 +41,10 @@ The Document DB / JSONB track uses those real Binance and BNB payloads:
 `time_series.candles_1m` plus `onchain.raw_logs` -> `documents.raw_payloads`
 JSONB documents -> containment and expression-index queries.
 
+The JSONB index benchmark compares default `jsonb_ops` and `jsonb_path_ops`
+GIN indexes on the same real payload snapshot and records index size plus
+`EXPLAIN ANALYZE` summaries.
+
 The SearchDB track projects those JSONB documents into searchable text:
 `documents.raw_payloads` -> `search.search_documents` -> full-text GIN search
 and trigram fuzzy lookup.

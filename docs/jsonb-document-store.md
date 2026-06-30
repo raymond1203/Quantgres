@@ -60,3 +60,6 @@ Expected behavior:
 This is the first JSONB document-store layer. Later loops can compare
 `jsonb_ops` and `jsonb_path_ops`, add jsonpath queries, and project documents
 into normalized event tables.
+
+The `jsonb_ops` vs `jsonb_path_ops` comparison is documented in
+`docs/jsonb-index-benchmark.md`.
