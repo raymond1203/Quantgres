@@ -91,6 +91,7 @@ uv run quantgres binance-paper-trace-smoke --symbol BTCUSDT --interval 1m --limi
 uv run quantgres bnb-rpc-info
 uv run quantgres ingest-bnb-logs --from-block 107270817 --to-block 107270817 --address 0x16b9a82891338f9ba80e2d6970fdda79d1eb0dae --topic0 0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
 uv run quantgres jsonb-document-smoke --symbol BTCUSDT --document-limit 10
+uv run quantgres search-document-smoke --query "pancakeswap swap" --fuzzy 0x16b9a82891338f9b --limit 5
 ```
 
 ## Project Layout

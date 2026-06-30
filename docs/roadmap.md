@@ -37,6 +37,10 @@ The Document DB / JSONB track uses those real Binance and BNB payloads:
 `time_series.candles_1m` plus `onchain.raw_logs` -> `documents.raw_payloads`
 JSONB documents -> containment and expression-index queries.
 
+The SearchDB track projects those JSONB documents into searchable text:
+`documents.raw_payloads` -> `search.search_documents` -> full-text GIN search
+and trigram fuzzy lookup.
+
 ## Phase 2: Backend System Patterns
 
 5. Search DB / Full-Text, Trigram, Hybrid Search
