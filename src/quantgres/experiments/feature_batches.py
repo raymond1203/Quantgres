@@ -1,5 +1,6 @@
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -23,6 +24,14 @@ FEATURE_BATCH_SCHEMA_SQL = FEATURE_STORE_SQL_DIR / "002_quant_feature_batches.sq
 
 BATCH_SOURCE = "quantgres.feature_store.batch"
 BATCH_ASOF_INDEX_NAME = "quant_feature_batch_items_symbol_asof_idx"
+BATCH_CODE_FINGERPRINT_PATHS = (
+    Path("src/quantgres/experiments/feature_batches.py"),
+    Path("src/quantgres/experiments/feature_store.py"),
+    Path("src/quantgres/experiments/olap_return_panel.py"),
+    Path("sql/feature_store/001_quant_feature_snapshots.sql"),
+    Path("sql/feature_store/002_quant_feature_batches.sql"),
+    Path("sql/analytics/001_market_return_panel.sql"),
+)
 
 INSERT_BATCH_SQL = """
 INSERT INTO feature_store.quant_feature_batches (
@@ -136,6 +145,8 @@ class FeatureBatchPlanSummary:
 class FeatureBatchSmokeResult:
     batch_id: str
     feature_set: str
+    config_hash: str
+    code_hash: str
     source_rows: int
     inserted_batch: int
     inserted_items: int
@@ -173,19 +184,89 @@ def canonical_row(row: FeatureSourceRow) -> dict[str, object]:
     }
 
 
+def canonical_json_hash(material: Mapping[str, object]) -> str:
+    body = json.dumps(material, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def display_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def build_code_fingerprint(
+    paths: Iterable[Path] = BATCH_CODE_FINGERPRINT_PATHS,
+) -> dict[str, object]:
+    code_paths = tuple(
+        {
+            "path": display_path(path),
+            "sha256": file_sha256(PROJECT_ROOT / path if not path.is_absolute() else path),
+        }
+        for path in paths
+    )
+    return {
+        "code_hash": canonical_json_hash({"code_paths": list(code_paths)}),
+        "code_paths": list(code_paths),
+    }
+
+
+def build_batch_config(
+    *,
+    symbol: str,
+    feature_set: str,
+    run_key: str,
+    binance_limit: int,
+    source_limit: int,
+) -> dict[str, object]:
+    return {
+        "symbol": symbol.upper(),
+        "feature_set": feature_set,
+        "run_key": run_key,
+        "binance_limit": binance_limit,
+        "source_limit": source_limit,
+    }
+
+
+def build_reproducibility_metadata(
+    *,
+    config: dict[str, object],
+    code_fingerprint: dict[str, object],
+) -> dict[str, object]:
+    config_hash = canonical_json_hash(config)
+    return {
+        "config": config,
+        "config_hash": config_hash,
+        "code_hash": str(code_fingerprint["code_hash"]),
+        "code_paths": code_fingerprint["code_paths"],
+    }
+
+
 def build_batch_id(
     *,
     feature_set: str,
     run_key: str,
     rows: tuple[FeatureSourceRow, ...],
+    config_hash: str | None = None,
+    code_hash: str | None = None,
 ) -> str:
-    material = {
+    material: dict[str, object] = {
         "feature_set": feature_set,
         "run_key": run_key,
         "rows": [canonical_row(row) for row in rows],
     }
-    body = json.dumps(material, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+    if config_hash is not None:
+        material["config_hash"] = config_hash
+    if code_hash is not None:
+        material["code_hash"] = code_hash
+
+    return canonical_json_hash(material)
 
 
 def insert_batch(
@@ -194,9 +275,17 @@ def insert_batch(
     feature_set: str,
     source_row_count: int,
     run_key: str,
+    reproducibility_metadata: dict[str, object] | None = None,
     database_url: str | None = None,
 ) -> int:
     ensure_feature_batch_schema(database_url)
+    metadata: dict[str, object] = {
+        "run_key": run_key,
+        "source": FEATURE_SOURCE,
+    }
+    if reproducibility_metadata is not None:
+        metadata.update(reproducibility_metadata)
+
     with connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute(
             query_text(INSERT_BATCH_SQL),
@@ -205,12 +294,7 @@ def insert_batch(
                 "feature_set": feature_set,
                 "source": BATCH_SOURCE,
                 "source_row_count": source_row_count,
-                "metadata": Jsonb(
-                    {
-                        "run_key": run_key,
-                        "source": FEATURE_SOURCE,
-                    }
-                ),
+                "metadata": Jsonb(metadata),
             },
         )
         return cursor.rowcount
@@ -409,12 +493,32 @@ def run_feature_batch_smoke(
     if not rows:
         raise RuntimeError("Expected at least one feature source row.")
 
-    batch_id = build_batch_id(feature_set=feature_set, run_key=run_key, rows=rows)
+    config = build_batch_config(
+        symbol=symbol,
+        feature_set=feature_set,
+        run_key=run_key,
+        binance_limit=binance_limit,
+        source_limit=source_limit,
+    )
+    reproducibility_metadata = build_reproducibility_metadata(
+        config=config,
+        code_fingerprint=build_code_fingerprint(),
+    )
+    config_hash = str(reproducibility_metadata["config_hash"])
+    code_hash = str(reproducibility_metadata["code_hash"])
+    batch_id = build_batch_id(
+        feature_set=feature_set,
+        run_key=run_key,
+        rows=rows,
+        config_hash=config_hash,
+        code_hash=code_hash,
+    )
     inserted_batch = insert_batch(
         batch_id=batch_id,
         feature_set=feature_set,
         source_row_count=len(rows),
         run_key=run_key,
+        reproducibility_metadata=reproducibility_metadata,
         database_url=database_url,
     )
     inserted_items = insert_batch_items(
@@ -428,6 +532,8 @@ def run_feature_batch_smoke(
     return FeatureBatchSmokeResult(
         batch_id=batch_id,
         feature_set=feature_set,
+        config_hash=config_hash,
+        code_hash=code_hash,
         source_rows=len(rows),
         inserted_batch=inserted_batch,
         inserted_items=inserted_items,
