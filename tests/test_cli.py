@@ -102,3 +102,22 @@ def test_rdb_ledger_smoke_prints_summary(monkeypatch, capsys):
     assert "A1 mean_reversion_v1 BTCUSDT quantity=0.4" in output
     assert "A1 USDT cash_balance=76183.8100000000" in output
     assert "negative order quantity: passed CheckViolation" in output
+
+
+def test_benchmark_rdb_ledger_prints_report_paths(monkeypatch, capsys, tmp_path):
+    class Report:
+        json_path = tmp_path / "report.json"
+        markdown_path = tmp_path / "report.md"
+
+    monkeypatch.setattr(
+        "quantgres.cli.run_rdb_ledger_cash_balance_benchmark",
+        lambda: Report(),
+    )
+
+    exit_code = main(["benchmark-rdb-ledger"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "JSON report:" in output
+    assert "Markdown report:" in output

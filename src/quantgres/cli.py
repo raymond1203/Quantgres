@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from quantgres import __version__
 from quantgres.config import load_settings, mask_database_url
 from quantgres.db import ping
+from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_trading_ledger import TradingLedgerSmokeResult, run_smoke
 from quantgres.runtime import DatabaseRuntimeInfo, load_runtime_info
 
@@ -29,6 +30,11 @@ def build_parser() -> ArgumentParser:
     subparsers.add_parser(
         "rdb-ledger-smoke",
         help="Apply the RDB trading ledger fixture and verify core constraints.",
+    )
+
+    subparsers.add_parser(
+        "benchmark-rdb-ledger",
+        help="Generate the RDB trading ledger cash balance benchmark report.",
     )
 
     return parser
@@ -118,6 +124,13 @@ def run_rdb_ledger_smoke() -> int:
     return 0
 
 
+def run_benchmark_rdb_ledger() -> int:
+    report = run_rdb_ledger_cash_balance_benchmark()
+    print(f"JSON report: {report.json_path}")
+    print(f"Markdown report: {report.markdown_path}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -130,6 +143,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "rdb-ledger-smoke":
         return run_rdb_ledger_smoke()
+
+    if args.command == "benchmark-rdb-ledger":
+        return run_benchmark_rdb_ledger()
 
     parser.print_help()
     return 0
