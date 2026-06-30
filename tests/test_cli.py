@@ -1,4 +1,12 @@
+from decimal import Decimal
+
 from quantgres.cli import main
+from quantgres.experiments.rdb_trading_ledger import (
+    CashBalanceRow,
+    ConstraintCheck,
+    PositionRow,
+    TradingLedgerSmokeResult,
+)
 from quantgres.runtime import DatabaseRuntimeInfo, ExtensionStatus
 
 
@@ -53,3 +61,44 @@ def test_db_info_fails_when_required_extension_is_missing(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "Missing required extensions: pg_trgm" in output
+
+
+def test_rdb_ledger_smoke_prints_summary(monkeypatch, capsys):
+    result = TradingLedgerSmokeResult(
+        positions=(
+            PositionRow(
+                account_code="A1",
+                strategy_code="mean_reversion_v1",
+                symbol="BTCUSDT",
+                quantity=Decimal("0.4"),
+                average_entry_price=Decimal("59970"),
+                market_price=Decimal("62100"),
+                unrealized_pnl=Decimal("852"),
+            ),
+        ),
+        cash_balances=(
+            CashBalanceRow(
+                account_code="A1",
+                currency="USDT",
+                cash_balance=Decimal("76183.8100000000"),
+            ),
+        ),
+        constraint_checks=(
+            ConstraintCheck(
+                name="negative order quantity",
+                passed=True,
+                error_type="CheckViolation",
+            ),
+        ),
+    )
+    monkeypatch.setattr("quantgres.cli.run_smoke", lambda: result)
+
+    exit_code = main(["rdb-ledger-smoke"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "RDB Trading Ledger Smoke" in output
+    assert "A1 mean_reversion_v1 BTCUSDT quantity=0.4" in output
+    assert "A1 USDT cash_balance=76183.8100000000" in output
+    assert "negative order quantity: passed CheckViolation" in output

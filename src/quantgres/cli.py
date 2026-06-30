@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from quantgres import __version__
 from quantgres.config import load_settings, mask_database_url
 from quantgres.db import ping
+from quantgres.experiments.rdb_trading_ledger import TradingLedgerSmokeResult, run_smoke
 from quantgres.runtime import DatabaseRuntimeInfo, load_runtime_info
 
 
@@ -23,6 +24,11 @@ def build_parser() -> ArgumentParser:
     subparsers.add_parser(
         "db-info",
         help="Connect to PostgreSQL and print runtime and extension metadata.",
+    )
+
+    subparsers.add_parser(
+        "rdb-ledger-smoke",
+        help="Apply the RDB trading ledger fixture and verify core constraints.",
     )
 
     return parser
@@ -73,6 +79,45 @@ def run_db_info() -> int:
     return 0
 
 
+def format_trading_ledger_smoke(result: TradingLedgerSmokeResult) -> list[str]:
+    lines = ["RDB Trading Ledger Smoke"]
+
+    lines.append("Positions:")
+    for position in result.positions:
+        lines.append(
+            "- "
+            f"{position.account_code} {position.strategy_code} {position.symbol} "
+            f"quantity={position.quantity} "
+            f"average_entry_price={position.average_entry_price} "
+            f"market_price={position.market_price} "
+            f"unrealized_pnl={position.unrealized_pnl}"
+        )
+
+    lines.append("Cash balances:")
+    for balance in result.cash_balances:
+        lines.append(
+            f"- {balance.account_code} {balance.currency} cash_balance={balance.cash_balance}"
+        )
+
+    lines.append("Constraint checks:")
+    for check in result.constraint_checks:
+        status = "passed" if check.passed else "failed"
+        lines.append(f"- {check.name}: {status} {check.error_type}".rstrip())
+
+    return lines
+
+
+def run_rdb_ledger_smoke() -> int:
+    result = run_smoke()
+    for line in format_trading_ledger_smoke(result):
+        print(line)
+
+    if not result.passed:
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -82,6 +127,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "db-info":
         return run_db_info()
+
+    if args.command == "rdb-ledger-smoke":
+        return run_rdb_ledger_smoke()
 
     parser.print_help()
     return 0

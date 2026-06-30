@@ -68,6 +68,7 @@ Run the CLI smoke check:
 uv run quantgres doctor
 uv run quantgres doctor --check-db
 uv run quantgres db-info
+uv run quantgres rdb-ledger-smoke
 ```
 
 ## Project Layout
