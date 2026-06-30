@@ -1,6 +1,11 @@
 from decimal import Decimal
 
 from quantgres.cli import main
+from quantgres.experiments.embedding_comparison import (
+    FASTEMBED_MODEL_DIMENSIONS,
+    MODEL_VECTOR_INDEX_NAME,
+    EmbeddingComparisonSmokeResult,
+)
 from quantgres.experiments.rdb_trading_ledger import (
     CashBalanceRow,
     ConstraintCheck,
@@ -11,6 +16,11 @@ from quantgres.experiments.time_series_candles import (
     CandlePlanSummary,
     CandleRangeSummary,
     CandleSmokeResult,
+)
+from quantgres.experiments.vector_memory import (
+    MemorySearchResult,
+    VectorMemorySmokeResult,
+    VectorPlanSummary,
 )
 from quantgres.runtime import DatabaseRuntimeInfo, ExtensionStatus
 
@@ -155,3 +165,55 @@ def test_time_series_candles_smoke_prints_summary(monkeypatch, capsys):
     assert "Time-Series Candles Smoke" in output
     assert "symbol=BTCUSDT candle_count=60" in output
     assert "root_node=Aggregate" in output
+
+
+def test_embedding_comparison_smoke_prints_model_summary(monkeypatch, capsys):
+    plan = VectorPlanSummary(
+        root_node_type="Limit",
+        index_names=(MODEL_VECTOR_INDEX_NAME,),
+        planning_time_ms=0.1,
+        execution_time_ms=0.2,
+    )
+    deterministic_result = MemorySearchResult(
+        source="bnb_rpc_log",
+        external_id="tx-1",
+        title="BNB Chain PancakeSwap swap log",
+        preview="bnb chain pancakeswap swap rpc log",
+        cosine_similarity=0.9,
+    )
+    model_result = MemorySearchResult(
+        source="bnb_rpc_log",
+        external_id="tx-1",
+        title="BNB Chain PancakeSwap swap log",
+        preview="bnb chain pancakeswap swap rpc log",
+        cosine_similarity=0.8,
+    )
+    result = EmbeddingComparisonSmokeResult(
+        vector_projection=VectorMemorySmokeResult(
+            projected_chunks=1,
+            total_chunks=1,
+            query_text="pancakeswap swap bnb chain",
+            results=(deterministic_result,),
+            plan=plan,
+        ),
+        embedding_model="BAAI/bge-small-en-v1.5",
+        embedding_dimensions=FASTEMBED_MODEL_DIMENSIONS,
+        projected_model_chunks=1,
+        total_model_chunks=1,
+        query_text="pancakeswap swap bnb chain",
+        deterministic_results=(deterministic_result,),
+        model_results=(model_result,),
+        top_overlap_count=1,
+        plan=plan,
+    )
+    monkeypatch.setattr("quantgres.cli.run_embedding_comparison_smoke", lambda **_: result)
+
+    exit_code = main(["embedding-comparison-smoke", "--source-limit", "1", "--limit", "1"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Embedding Comparison Smoke" in output
+    assert "Model: BAAI/bge-small-en-v1.5" in output
+    assert "Top overlap: 1/1 deterministic results" in output
+    assert MODEL_VECTOR_INDEX_NAME in output
