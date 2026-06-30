@@ -1,13 +1,15 @@
 # Time-Series Candles Experiment
 
 This experiment models 1-minute candles in PostgreSQL before adding
-partitioning.
+partitioning. It starts with a deterministic fixture and is hardened with real
+Binance public kline ingestion.
 
 ## Study Question
 
-How should simple candle data be modeled for symbol/time range queries, and what
-plan does PostgreSQL choose for a small deterministic fixture with B-tree and
-BRIN indexes present?
+How should candle data be modeled for symbol/time range queries, how should raw
+exchange kline fields be preserved, and what plan does PostgreSQL choose for
+small deterministic and real public-data samples with B-tree and BRIN indexes
+present?
 
 ## Schema
 
@@ -20,6 +22,17 @@ SQL files:
 Table:
 
 - `time_series.candles_1m`
+
+Important columns:
+
+- `symbol`, `ts`: primary key; Binance klines are uniquely identified by open
+  time.
+- `close_ts`: exchange-reported close time.
+- `open_price`, `high_price`, `low_price`, `close_price`, `volume`: OHLCV.
+- `quote_volume`, `trade_count`, `taker_buy_base_volume`,
+  `taker_buy_quote_volume`: Binance kline payload fields retained for later
+  feature and liquidity work.
+- `source`: distinguishes deterministic fixtures from real public API data.
 
 Indexes:
 
@@ -51,6 +64,25 @@ Expected facts:
 - Candle count: 60
 - First timestamp: `2026-01-01 00:00:00+00:00`
 - Last timestamp: `2026-01-01 00:59:00+00:00`
+
+## Real Binance Public Ingestion
+
+Binance public Spot market-data endpoints do not require an API key for kline
+reads. The project uses this path for real market-data evidence before adding
+more database tracks:
+
+```powershell
+uv run quantgres ingest-binance-klines --symbol BTCUSDT --interval 1m --limit 60
+```
+
+Expected behavior:
+
+- Fetches real Binance public `GET /api/v3/klines` rows.
+- Upserts them into `time_series.candles_1m`.
+- Marks `source = 'binance_spot_klines'`.
+- Prints fetched/upserted row counts and first/last timestamps.
+
+No Binance API key or private account endpoint is used.
 
 ## Benchmark Query
 

@@ -72,9 +72,15 @@ def load_positions(database_url: str | None = None) -> tuple[PositionRow, ...]:
                 market_price,
                 (market_price - average_entry_price) * quantity AS unrealized_pnl
             FROM rdb.position_snapshots
-            WHERE snapshot_at = (
-                SELECT max(snapshot_at)
+            WHERE (account_code, strategy_code, symbol, snapshot_at) IN (
+                SELECT
+                    account_code,
+                    strategy_code,
+                    symbol,
+                    max(snapshot_at)
                 FROM rdb.position_snapshots
+                WHERE account_code IN ('A1', 'A2')
+                GROUP BY account_code, strategy_code, symbol
             )
             ORDER BY account_code, symbol
             """
@@ -104,6 +110,7 @@ def load_cash_balances(database_url: str | None = None) -> tuple[CashBalanceRow,
                 currency,
                 sum(amount) AS cash_balance
             FROM rdb.cash_ledger_entries
+            WHERE account_code IN ('A1', 'A2')
             GROUP BY account_code, currency
             ORDER BY account_code, currency
             """
