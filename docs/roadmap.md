@@ -25,9 +25,13 @@ metric comparison, not as the primary ingestion path.
 3. Document DB / JSONB
 4. Vector DB / pgvector
 
-RDB and Time-Series should be connected by a real-data vertical slice before
-the next track: Binance public klines -> `time_series.candles_1m` -> paper-only
-RDB order/fill/cash/position trace.
+RDB and Time-Series are connected by a real-data vertical slice: Binance public
+klines -> `time_series.candles_1m` -> paper-only RDB order/fill/cash/position
+trace.
+
+The on-chain foundation starts with BNB Chain RPC raw logs:
+`eth_getLogs` -> `onchain.raw_logs` JSONB -> later normalized DeFi event
+projections.
 
 ## Phase 2: Backend System Patterns
 

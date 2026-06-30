@@ -8,6 +8,7 @@ from quantgres.experiments.binance_candles import (
     BinanceCandleIngestionResult,
     fetch_and_store_binance_klines,
 )
+from quantgres.experiments.bnb_raw_logs import BnbLogIngestionResult, fetch_and_store_bnb_logs
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_paper_trace import (
     BinancePaperTraceSmokeResult,
@@ -16,6 +17,8 @@ from quantgres.experiments.rdb_paper_trace import (
 from quantgres.experiments.rdb_trading_ledger import TradingLedgerSmokeResult, run_smoke
 from quantgres.experiments.time_series_candles import CandleSmokeResult
 from quantgres.experiments.time_series_candles import run_smoke as run_candle_smoke
+from quantgres.onchain.bnb_rpc import DEFAULT_BNB_RPC_URL, BnbRpcInfo, load_bnb_rpc_info
+from quantgres.onchain.bnb_rpc import parse_block_arg as parse_bnb_block_arg
 from quantgres.runtime import DatabaseRuntimeInfo, load_runtime_info
 
 
@@ -67,6 +70,22 @@ def build_parser() -> ArgumentParser:
     paper_trace.add_argument("--symbol", default="BTCUSDT")
     paper_trace.add_argument("--interval", default="1m")
     paper_trace.add_argument("--limit", type=int, default=60)
+
+    bnb_info = subparsers.add_parser(
+        "bnb-rpc-info",
+        help="Call BNB Chain JSON-RPC and print chain id and latest block.",
+    )
+    bnb_info.add_argument("--rpc-url", default=DEFAULT_BNB_RPC_URL)
+
+    ingest_bnb_logs = subparsers.add_parser(
+        "ingest-bnb-logs",
+        help="Fetch BNB Chain raw logs with eth_getLogs and store them as JSONB.",
+    )
+    ingest_bnb_logs.add_argument("--rpc-url", default=DEFAULT_BNB_RPC_URL)
+    ingest_bnb_logs.add_argument("--from-block", required=True)
+    ingest_bnb_logs.add_argument("--to-block", required=True)
+    ingest_bnb_logs.add_argument("--address")
+    ingest_bnb_logs.add_argument("--topic0")
 
     return parser
 
@@ -262,6 +281,50 @@ def run_binance_paper_trace(args: Namespace) -> int:
     return 0
 
 
+def format_bnb_rpc_info(info: BnbRpcInfo) -> list[str]:
+    return [
+        "BNB Chain RPC Info",
+        f"RPC URL: {info.rpc_url}",
+        f"Chain ID: {info.chain_id}",
+        f"Latest block: {info.latest_block_number}",
+    ]
+
+
+def run_bnb_rpc_info(args: Namespace) -> int:
+    info = load_bnb_rpc_info(rpc_url=args.rpc_url)
+    for line in format_bnb_rpc_info(info):
+        print(line)
+
+    return 0
+
+
+def format_bnb_log_ingestion(result: BnbLogIngestionResult) -> list[str]:
+    return [
+        "BNB Chain Raw Log Ingestion",
+        f"RPC URL: {result.rpc_url}",
+        f"Chain ID: {result.chain_id}",
+        f"Range: {result.from_block}..{result.to_block}",
+        f"Address: {result.address}",
+        f"Topic0: {result.topic0}",
+        f"Rows fetched: {result.rows_fetched}",
+        f"Rows upserted: {result.rows_upserted}",
+    ]
+
+
+def run_ingest_bnb_logs(args: Namespace) -> int:
+    result = fetch_and_store_bnb_logs(
+        rpc_url=args.rpc_url,
+        from_block=parse_bnb_block_arg(args.from_block),
+        to_block=parse_bnb_block_arg(args.to_block),
+        address=args.address,
+        topic0=args.topic0,
+    )
+    for line in format_bnb_log_ingestion(result):
+        print(line)
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -286,6 +349,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "binance-paper-trace-smoke":
         return run_binance_paper_trace(args)
+
+    if args.command == "bnb-rpc-info":
+        return run_bnb_rpc_info(args)
+
+    if args.command == "ingest-bnb-logs":
+        return run_ingest_bnb_logs(args)
 
     parser.print_help()
     return 0
