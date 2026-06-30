@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.request import Request, urlopen
 
@@ -37,6 +38,17 @@ class BnbRawLog:
     raw_log: dict[str, Any]
     from_block: int
     to_block: int
+
+
+@dataclass(frozen=True)
+class BnbBlock:
+    chain_id: int
+    rpc_url: str
+    block_number: int
+    block_hash: str
+    parent_hash: str
+    block_timestamp: datetime
+    raw_block: dict[str, Any]
 
 
 def hex_to_int(value: str) -> int:
@@ -114,6 +126,49 @@ def load_bnb_rpc_info(
         chain_id=chain_id,
         latest_block_number=latest_block_number,
     )
+
+
+def normalize_block(
+    *,
+    raw_block: dict[str, Any],
+    chain_id: int,
+    rpc_url: str,
+) -> BnbBlock:
+    block_number = hex_to_int(str(raw_block["number"]))
+    block_timestamp = datetime.fromtimestamp(hex_to_int(str(raw_block["timestamp"])), tz=UTC)
+    return BnbBlock(
+        chain_id=chain_id,
+        rpc_url=rpc_url,
+        block_number=block_number,
+        block_hash=str(raw_block["hash"]),
+        parent_hash=str(raw_block["parentHash"]),
+        block_timestamp=block_timestamp,
+        raw_block=raw_block,
+    )
+
+
+def get_block_by_number(
+    *,
+    rpc_url: str,
+    chain_id: int,
+    block_number: int,
+    include_transactions: bool = False,
+) -> BnbBlock:
+    result = call_rpc(
+        rpc_url=rpc_url,
+        method="eth_getBlockByNumber",
+        params=[int_to_hex(block_number), include_transactions],
+    )
+    if result is None:
+        raise RuntimeError(f"Block {block_number} was not found.")
+    if not isinstance(result, dict):
+        raise TypeError("Expected eth_getBlockByNumber result to be an object.")
+
+    block = normalize_block(raw_block=result, chain_id=chain_id, rpc_url=rpc_url)
+    if block.block_number != block_number:
+        raise RuntimeError(f"Expected block {block_number}, got {block.block_number}.")
+
+    return block
 
 
 def normalize_log(

@@ -8,6 +8,10 @@ from quantgres.experiments.binance_candles import (
     BinanceCandleIngestionResult,
     fetch_and_store_binance_klines,
 )
+from quantgres.experiments.bnb_block_timestamps import (
+    BnbBlockTimestampSmokeResult,
+    run_bnb_block_timestamp_smoke,
+)
 from quantgres.experiments.bnb_raw_logs import BnbLogIngestionResult, fetch_and_store_bnb_logs
 from quantgres.experiments.bnb_swap_projection import (
     PANCAKESWAP_SAMPLE_BLOCK,
@@ -142,6 +146,16 @@ def build_parser() -> ArgumentParser:
     bnb_swap_projection.add_argument("--to-block", default=str(PANCAKESWAP_SAMPLE_BLOCK))
     bnb_swap_projection.add_argument("--address", default=PANCAKESWAP_V2_WBNB_USDT_PAIR)
     bnb_swap_projection.add_argument("--topic0", default=PANCAKESWAP_V2_SWAP_TOPIC0)
+
+    bnb_block_timestamp = subparsers.add_parser(
+        "bnb-block-timestamp-smoke",
+        help="Fetch BNB block timestamps and enrich projected swap events.",
+    )
+    bnb_block_timestamp.add_argument("--rpc-url", default=DEFAULT_BNB_RPC_URL)
+    bnb_block_timestamp.add_argument("--from-block", default=str(PANCAKESWAP_SAMPLE_BLOCK))
+    bnb_block_timestamp.add_argument("--to-block", default=str(PANCAKESWAP_SAMPLE_BLOCK))
+    bnb_block_timestamp.add_argument("--address", default=PANCAKESWAP_V2_WBNB_USDT_PAIR)
+    bnb_block_timestamp.add_argument("--topic0", default=PANCAKESWAP_V2_SWAP_TOPIC0)
 
     jsonb_smoke = subparsers.add_parser(
         "jsonb-document-smoke",
@@ -496,6 +510,54 @@ def run_bnb_swap_projection(args: Namespace) -> int:
         print(line)
 
     if result.projected_events == 0 or not result.sample_events:
+        return 1
+
+    return 0
+
+
+def format_bnb_block_timestamp(result: BnbBlockTimestampSmokeResult) -> list[str]:
+    lines = [
+        "BNB Block Timestamp Smoke",
+        f"Raw logs fetched: {result.swap_projection.ingestion.rows_fetched}",
+        f"Projected swaps: {result.swap_projection.projected_events}",
+        f"Fetched blocks: {len(result.fetched_blocks)}",
+        f"Upserted blocks: {result.upserted_blocks}",
+        f"Updated swaps: {result.updated_swaps}",
+        f"Stored blocks: {result.stored_blocks}",
+        f"Enriched swaps: {result.enriched_swaps}",
+        "Blocks:",
+    ]
+    lines.extend(
+        (f"- block={block.block_number} timestamp={block.block_timestamp} hash={block.block_hash}")
+        for block in result.fetched_blocks
+    )
+    lines.append("Sample enriched swaps:")
+    lines.extend(
+        (
+            f"- block={event.block_number} "
+            f"timestamp={event.block_timestamp} "
+            f"tx={event.transaction_hash} "
+            f"log_index={event.log_index}"
+        )
+        for event in result.sample_events
+    )
+    return lines
+
+
+def run_bnb_block_timestamp(args: Namespace) -> int:
+    result = run_bnb_block_timestamp_smoke(
+        rpc_url=args.rpc_url,
+        from_block=parse_bnb_block_arg(args.from_block),
+        to_block=parse_bnb_block_arg(args.to_block),
+        pair_address=args.address,
+        topic0=args.topic0,
+    )
+    for line in format_bnb_block_timestamp(result):
+        print(line)
+
+    if not result.fetched_blocks or result.stored_blocks == 0:
+        return 1
+    if result.enriched_swaps == 0 or not result.sample_events:
         return 1
 
     return 0
@@ -977,6 +1039,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "bnb-swap-projection-smoke":
         return run_bnb_swap_projection(args)
+
+    if args.command == "bnb-block-timestamp-smoke":
+        return run_bnb_block_timestamp(args)
 
     if args.command == "jsonb-document-smoke":
         return run_jsonb_documents(args)

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS defi.swap_events (
     pair_address text NOT NULL,
     block_number bigint NOT NULL,
     block_hash text NOT NULL,
+    block_timestamp timestamptz,
     transaction_hash text NOT NULL,
     transaction_index integer NOT NULL,
     log_index integer NOT NULL,
@@ -35,8 +36,15 @@ CREATE TABLE IF NOT EXISTS defi.swap_events (
     CHECK (jsonb_typeof(raw_log) = 'object')
 );
 
+ALTER TABLE defi.swap_events
+    ADD COLUMN IF NOT EXISTS block_timestamp timestamptz;
+
 CREATE INDEX IF NOT EXISTS swap_events_pair_block_idx
     ON defi.swap_events (chain_id, dex, pair_address, block_number DESC, log_index DESC);
+
+CREATE INDEX IF NOT EXISTS swap_events_pair_timestamp_idx
+    ON defi.swap_events (chain_id, dex, pair_address, block_timestamp DESC, log_index DESC)
+    WHERE block_timestamp IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS swap_events_transaction_idx
     ON defi.swap_events (chain_id, transaction_hash);
