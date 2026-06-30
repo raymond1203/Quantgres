@@ -7,6 +7,13 @@ from quantgres.experiments.embedding_comparison import (
     EmbeddingComparisonSmokeResult,
     VectorRetrievalBenchmarkResult,
 )
+from quantgres.experiments.queue_jobs import (
+    QueueJob,
+    QueueJobStatus,
+    QueueRecoveredJob,
+    QueueStaleLockSmokeResult,
+    QueueWorkerExecution,
+)
 from quantgres.experiments.rdb_trading_ledger import (
     CashBalanceRow,
     ConstraintCheck,
@@ -271,3 +278,78 @@ def test_vector_retrieval_benchmark_prints_report_paths(monkeypatch, capsys, tmp
     assert exit_code == 0
     assert "JSON report:" in output
     assert "Markdown report:" in output
+
+
+def test_queue_stale_lock_smoke_prints_recovery_summary(monkeypatch, capsys):
+    first_claim = QueueJob(
+        job_id=1,
+        job_kind="binance_klines",
+        idempotency_key="worker:ingestion:test:binance:BTCUSDT:1m:5",
+        payload={"symbol": "BTCUSDT", "interval": "1m", "limit": 5},
+        status="running",
+        priority=20,
+        attempts=1,
+        max_attempts=2,
+        locked_by="worker-stale-1",
+    )
+    recovered = QueueRecoveredJob(
+        job_id=1,
+        job_kind="binance_klines",
+        idempotency_key=first_claim.idempotency_key,
+        status="failed",
+        attempts=1,
+        max_attempts=2,
+        locked_by=None,
+        last_error="stale lock recovered after 60 seconds",
+    )
+    reclaimed = QueueJob(
+        job_id=1,
+        job_kind="binance_klines",
+        idempotency_key=first_claim.idempotency_key,
+        payload={"symbol": "BTCUSDT", "interval": "1m", "limit": 5},
+        status="running",
+        priority=20,
+        attempts=2,
+        max_attempts=2,
+        locked_by="worker-recovery-1",
+    )
+    result = QueueStaleLockSmokeResult(
+        run_key="test",
+        stale_worker_id="worker-stale-1",
+        recovery_worker_id="worker-recovery-1",
+        stale_timeout_seconds=60,
+        first_claim=first_claim,
+        heartbeat_updated=True,
+        recovered_jobs=(recovered,),
+        reclaimed_job=reclaimed,
+        reclaimed_execution=QueueWorkerExecution(
+            worker_id="worker-recovery-1",
+            job_kind="binance_klines",
+            idempotency_key=first_claim.idempotency_key,
+            final_status="completed",
+            attempts=2,
+            summary={"rows_fetched": 5, "rows_upserted": 5},
+        ),
+        statuses=(
+            QueueJobStatus(
+                job_kind="binance_klines",
+                idempotency_key=first_claim.idempotency_key,
+                status="completed",
+                attempts=2,
+                max_attempts=2,
+                locked_by=None,
+                last_error=None,
+            ),
+        ),
+    )
+    monkeypatch.setattr("quantgres.cli.run_queue_stale_lock_smoke", lambda **_: result)
+
+    exit_code = main(["queue-stale-lock-smoke", "--run-key", "test"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "QueueDB Stale Lock Smoke" in output
+    assert "Heartbeat updated: True" in output
+    assert "Recovered jobs: 1" in output
+    assert "Reclaimed execution: status=completed" in output

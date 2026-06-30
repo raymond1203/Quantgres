@@ -3,11 +3,13 @@ import pytest
 from quantgres.experiments.queue_jobs import (
     QueueBenchmarkClaim,
     QueueJob,
+    age_running_job_lock,
     build_benchmark_jobs,
     build_worker_jobs,
     count_duplicate_claims,
     execute_queue_job,
     payload_int,
+    recover_stale_jobs,
     worker_prefix,
 )
 
@@ -75,3 +77,16 @@ def test_execute_queue_job_rejects_unsupported_job_kind():
 
     with pytest.raises(ValueError, match="Unsupported queue job kind"):
         execute_queue_job(job)
+
+
+def test_age_running_job_lock_rejects_non_positive_age():
+    with pytest.raises(ValueError, match="age_seconds"):
+        age_running_job_lock(job_id=1, age_seconds=0)
+
+
+def test_recover_stale_jobs_rejects_non_positive_limits():
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        recover_stale_jobs(timeout_seconds=0)
+
+    with pytest.raises(ValueError, match="limit"):
+        recover_stale_jobs(timeout_seconds=60, limit=0)
