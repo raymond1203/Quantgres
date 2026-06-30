@@ -37,6 +37,10 @@ The first normalized DeFi projection decodes PancakeSwap V2 Swap logs:
 `onchain.raw_logs` -> `defi.swap_events` typed sender, recipient, and amount
 columns.
 
+The first BNB event-time enrichment stores block timestamps:
+`eth_getBlockByNumber` -> `onchain.blocks` -> `defi.swap_events.block_timestamp`
+for market/on-chain time alignment.
+
 The Document DB / JSONB track uses those real Binance and BNB payloads:
 `time_series.candles_1m` plus `onchain.raw_logs` -> `documents.raw_payloads`
 JSONB documents -> containment and expression-index queries.
