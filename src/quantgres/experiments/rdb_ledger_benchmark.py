@@ -5,8 +5,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from quantgres.db import connect
-from quantgres.experiments.rdb_trading_ledger import apply_schema_and_fixture, query_text
+from quantgres.db import connect, query_text
+from quantgres.experiments.rdb_trading_ledger import apply_schema_and_fixture
 from quantgres.reports import WrittenReport, default_generated_reports_dir
 from quantgres.runtime import load_runtime_info
 

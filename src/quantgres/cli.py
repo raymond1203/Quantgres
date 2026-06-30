@@ -6,6 +6,8 @@ from quantgres.config import load_settings, mask_database_url
 from quantgres.db import ping
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_trading_ledger import TradingLedgerSmokeResult, run_smoke
+from quantgres.experiments.time_series_candles import CandleSmokeResult
+from quantgres.experiments.time_series_candles import run_smoke as run_candle_smoke
 from quantgres.runtime import DatabaseRuntimeInfo, load_runtime_info
 
 
@@ -35,6 +37,11 @@ def build_parser() -> ArgumentParser:
     subparsers.add_parser(
         "benchmark-rdb-ledger",
         help="Generate the RDB trading ledger cash balance benchmark report.",
+    )
+
+    subparsers.add_parser(
+        "time-series-candles-smoke",
+        help="Apply the candle fixture and verify a symbol/time range query.",
     )
 
     return parser
@@ -131,6 +138,37 @@ def run_benchmark_rdb_ledger() -> int:
     return 0
 
 
+def format_candle_smoke(result: CandleSmokeResult) -> list[str]:
+    summary = result.summary
+    plan = result.plan
+    return [
+        "Time-Series Candles Smoke",
+        (
+            f"Summary: symbol={summary.symbol} "
+            f"candle_count={summary.candle_count} "
+            f"first_ts={summary.first_ts} "
+            f"last_ts={summary.last_ts} "
+            f"vwap={summary.vwap}"
+        ),
+        (
+            f"Plan: root_node={plan.root_node_type} "
+            f"planning_time_ms={plan.planning_time_ms} "
+            f"execution_time_ms={plan.execution_time_ms}"
+        ),
+    ]
+
+
+def run_time_series_candles_smoke() -> int:
+    result = run_candle_smoke()
+    for line in format_candle_smoke(result):
+        print(line)
+
+    if result.summary.candle_count != 60:
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -146,6 +184,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "benchmark-rdb-ledger":
         return run_benchmark_rdb_ledger()
+
+    if args.command == "time-series-candles-smoke":
+        return run_time_series_candles_smoke()
 
     parser.print_help()
     return 0

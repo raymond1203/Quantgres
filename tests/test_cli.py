@@ -7,6 +7,11 @@ from quantgres.experiments.rdb_trading_ledger import (
     PositionRow,
     TradingLedgerSmokeResult,
 )
+from quantgres.experiments.time_series_candles import (
+    CandlePlanSummary,
+    CandleRangeSummary,
+    CandleSmokeResult,
+)
 from quantgres.runtime import DatabaseRuntimeInfo, ExtensionStatus
 
 
@@ -121,3 +126,32 @@ def test_benchmark_rdb_ledger_prints_report_paths(monkeypatch, capsys, tmp_path)
     assert exit_code == 0
     assert "JSON report:" in output
     assert "Markdown report:" in output
+
+
+def test_time_series_candles_smoke_prints_summary(monkeypatch, capsys):
+    result = CandleSmokeResult(
+        summary=CandleRangeSummary(
+            symbol="BTCUSDT",
+            candle_count=60,
+            first_ts="2026-01-01 00:00:00+00:00",
+            last_ts="2026-01-01 00:59:00+00:00",
+            min_low=Decimal("59995.0000000000"),
+            max_high=Decimal("60010.9000000000"),
+            vwap=Decimal("60003.1234567890"),
+        ),
+        plan=CandlePlanSummary(
+            root_node_type="Aggregate",
+            planning_time_ms=0.1,
+            execution_time_ms=0.2,
+        ),
+    )
+    monkeypatch.setattr("quantgres.cli.run_candle_smoke", lambda: result)
+
+    exit_code = main(["time-series-candles-smoke"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Time-Series Candles Smoke" in output
+    assert "symbol=BTCUSDT candle_count=60" in output
+    assert "root_node=Aggregate" in output

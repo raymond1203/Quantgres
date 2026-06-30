@@ -70,6 +70,7 @@ uv run quantgres doctor --check-db
 uv run quantgres db-info
 uv run quantgres rdb-ledger-smoke
 uv run quantgres benchmark-rdb-ledger
+uv run quantgres time-series-candles-smoke
 ```
 
 ## Project Layout
