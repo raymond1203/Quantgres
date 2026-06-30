@@ -33,6 +33,10 @@ The on-chain foundation starts with BNB Chain RPC raw logs:
 `eth_getLogs` -> `onchain.raw_logs` JSONB -> later normalized DeFi event
 projections.
 
+The Document DB / JSONB track uses those real Binance and BNB payloads:
+`time_series.candles_1m` plus `onchain.raw_logs` -> `documents.raw_payloads`
+JSONB documents -> containment and expression-index queries.
+
 ## Phase 2: Backend System Patterns
 
 5. Search DB / Full-Text, Trigram, Hybrid Search
