@@ -29,6 +29,10 @@ from quantgres.experiments.jsonb_index_benchmark import (
     JsonbIndexBenchmarkResult,
     run_jsonb_index_benchmark,
 )
+from quantgres.experiments.olap_return_panel import (
+    OlapReturnPanelSmokeResult,
+    run_olap_return_panel_smoke,
+)
 from quantgres.experiments.queue_jobs import QueueSmokeResult, run_queue_smoke
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_paper_trace import (
@@ -163,6 +167,14 @@ def build_parser() -> ArgumentParser:
     cache_summary.add_argument("--symbol", default="BTCUSDT")
     cache_summary.add_argument("--binance-limit", type=int, default=500)
     cache_summary.add_argument("--summary-key", default=DEFAULT_ONCHAIN_SUMMARY_KEY)
+
+    olap_panel = subparsers.add_parser(
+        "olap-return-panel-smoke",
+        help="Refresh an OLAP market return panel with on-chain aggregate metrics.",
+    )
+    olap_panel.add_argument("--symbol", default="BTCUSDT")
+    olap_panel.add_argument("--binance-limit", type=int, default=500)
+    olap_panel.add_argument("--limit", type=int, default=5)
 
     subparsers.add_parser(
         "queue-smoke",
@@ -658,6 +670,48 @@ def run_cache_summary(args: Namespace) -> int:
     return 0
 
 
+def format_olap_return_panel_smoke(result: OlapReturnPanelSmokeResult) -> list[str]:
+    lines = [
+        "OLAP Return Panel Smoke",
+        f"Binance rows fetched: {result.binance_ingestion.rows_fetched}",
+        f"Swap events projected: {result.swap_projection.projected_events}",
+        f"Panel rows: {result.panel_rows}",
+        "Latest rows:",
+    ]
+    lines.extend(
+        (
+            f"- {row.symbol} ts={row.ts} "
+            f"close={row.close_price} "
+            f"return_bps={row.return_bps} "
+            f"rolling_5_return_bps={row.rolling_5_return_bps} "
+            f"swap_count={row.swap_count}"
+        )
+        for row in result.latest_rows
+    )
+    lines.append(
+        f"Plan: root_node={result.plan.root_node_type} "
+        f"indexes={','.join(result.plan.index_names)} "
+        f"planning_time_ms={result.plan.planning_time_ms} "
+        f"execution_time_ms={result.plan.execution_time_ms}"
+    )
+    return lines
+
+
+def run_olap_return_panel(args: Namespace) -> int:
+    result = run_olap_return_panel_smoke(
+        symbol=args.symbol,
+        binance_limit=args.binance_limit,
+        result_limit=args.limit,
+    )
+    for line in format_olap_return_panel_smoke(result):
+        print(line)
+
+    if result.panel_rows == 0 or not result.latest_rows:
+        return 1
+
+    return 0
+
+
 def format_queue_smoke(result: QueueSmokeResult) -> list[str]:
     lines = [
         "QueueDB Smoke",
@@ -751,6 +805,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "cache-summary-smoke":
         return run_cache_summary(args)
+
+    if args.command == "olap-return-panel-smoke":
+        return run_olap_return_panel(args)
 
     if args.command == "queue-smoke":
         return run_queue_jobs()
