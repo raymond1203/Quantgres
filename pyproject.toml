@@ -1,0 +1,34 @@
+[project]
+name = "quantgres"
+version = "0.1.0"
+description = "PostgreSQL deep-dive experiments for quant and AI-agent database workloads."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "psycopg[binary]",
+]
+
+[project.scripts]
+quantgres = "quantgres.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "ty",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

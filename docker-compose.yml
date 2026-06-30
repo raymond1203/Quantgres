@@ -1,0 +1,21 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: quantgres-db
+    environment:
+      POSTGRES_DB: quantgres
+      POSTGRES_USER: quantgres
+      POSTGRES_PASSWORD: quantgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - quantgres_pgdata:/var/lib/postgresql/data
+      - ./sql/000_extensions.sql:/docker-entrypoint-initdb.d/000_extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quantgres -d quantgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  quantgres_pgdata:
