@@ -16,6 +16,11 @@ from quantgres.experiments.bnb_swap_projection import (
     BnbSwapProjectionSmokeResult,
     run_bnb_swap_projection_smoke,
 )
+from quantgres.experiments.cache_summary import (
+    DEFAULT_ONCHAIN_SUMMARY_KEY,
+    CacheSummarySmokeResult,
+    run_cache_summary_smoke,
+)
 from quantgres.experiments.jsonb_documents import (
     JsonbDocumentSmokeResult,
     run_jsonb_document_smoke,
@@ -150,6 +155,14 @@ def build_parser() -> ArgumentParser:
     vector_memory.add_argument("--query", default="pancakeswap swap bnb chain")
     vector_memory.add_argument("--source-limit", type=int, default=1000)
     vector_memory.add_argument("--limit", type=int, default=5)
+
+    cache_summary = subparsers.add_parser(
+        "cache-summary-smoke",
+        help="Refresh a materialized market/on-chain summary and compare cache lookup plans.",
+    )
+    cache_summary.add_argument("--symbol", default="BTCUSDT")
+    cache_summary.add_argument("--binance-limit", type=int, default=500)
+    cache_summary.add_argument("--summary-key", default=DEFAULT_ONCHAIN_SUMMARY_KEY)
 
     subparsers.add_parser(
         "queue-smoke",
@@ -601,6 +614,50 @@ def run_vector_memory(args: Namespace) -> int:
     return 0
 
 
+def format_cache_summary_smoke(result: CacheSummarySmokeResult) -> list[str]:
+    summary = result.selected_summary
+    metrics = summary.metrics
+    return [
+        "Cache Summary Smoke",
+        f"Binance rows fetched: {result.binance_ingestion.rows_fetched}",
+        f"Swap events projected: {result.swap_projection.projected_events}",
+        f"Materialized rows: {result.refreshed_rows}",
+        (
+            f"Selected summary: key={summary.summary_key} "
+            f"kind={summary.summary_kind} "
+            f"latest_observed_at={summary.latest_observed_at}"
+        ),
+        f"Metrics: {metrics}",
+        (
+            f"Base plan: root_node={result.base_plan.root_node_type} "
+            f"indexes={','.join(result.base_plan.index_names)} "
+            f"planning_time_ms={result.base_plan.planning_time_ms} "
+            f"execution_time_ms={result.base_plan.execution_time_ms}"
+        ),
+        (
+            f"Cache plan: root_node={result.cache_plan.root_node_type} "
+            f"indexes={','.join(result.cache_plan.index_names)} "
+            f"planning_time_ms={result.cache_plan.planning_time_ms} "
+            f"execution_time_ms={result.cache_plan.execution_time_ms}"
+        ),
+    ]
+
+
+def run_cache_summary(args: Namespace) -> int:
+    result = run_cache_summary_smoke(
+        symbol=args.symbol,
+        binance_limit=args.binance_limit,
+        summary_key=args.summary_key,
+    )
+    for line in format_cache_summary_smoke(result):
+        print(line)
+
+    if result.refreshed_rows == 0:
+        return 1
+
+    return 0
+
+
 def format_queue_smoke(result: QueueSmokeResult) -> list[str]:
     lines = [
         "QueueDB Smoke",
@@ -691,6 +748,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "vector-memory-smoke":
         return run_vector_memory(args)
+
+    if args.command == "cache-summary-smoke":
+        return run_cache_summary(args)
 
     if args.command == "queue-smoke":
         return run_queue_jobs()
