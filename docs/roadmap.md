@@ -49,6 +49,12 @@ The SearchDB track projects those JSONB documents into searchable text:
 `documents.raw_payloads` -> `search.search_documents` -> full-text GIN search
 and trigram fuzzy lookup.
 
+The first VectorDB track projects search documents into deterministic pgvector
+memory chunks:
+`search.search_documents` -> `memory.agent_memory_chunks` -> cosine similarity
+search with an HNSW index. This proves pgvector mechanics before introducing a
+real embedding model.
+
 The QueueDB track models ingestion orchestration:
 job payloads -> `queue.ingestion_jobs` -> `FOR UPDATE SKIP LOCKED` worker claim
 -> retry and dead-letter state transitions.
