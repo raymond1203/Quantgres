@@ -20,6 +20,10 @@ from quantgres.experiments.jsonb_documents import (
     JsonbDocumentSmokeResult,
     run_jsonb_document_smoke,
 )
+from quantgres.experiments.jsonb_index_benchmark import (
+    JsonbIndexBenchmarkResult,
+    run_jsonb_index_benchmark,
+)
 from quantgres.experiments.queue_jobs import QueueSmokeResult, run_queue_smoke
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_paper_trace import (
@@ -119,6 +123,13 @@ def build_parser() -> ArgumentParser:
     )
     jsonb_smoke.add_argument("--symbol", default="BTCUSDT")
     jsonb_smoke.add_argument("--document-limit", type=int, default=10)
+
+    jsonb_index_benchmark = subparsers.add_parser(
+        "benchmark-jsonb-indexes",
+        help="Compare jsonb_ops and jsonb_path_ops GIN indexes on real JSONB payloads.",
+    )
+    jsonb_index_benchmark.add_argument("--symbol", default="BTCUSDT")
+    jsonb_index_benchmark.add_argument("--binance-limit", type=int, default=500)
 
     search_smoke = subparsers.add_parser(
         "search-document-smoke",
@@ -449,6 +460,48 @@ def run_jsonb_documents(args: Namespace) -> int:
     return 0
 
 
+def format_jsonb_index_benchmark(result: JsonbIndexBenchmarkResult) -> list[str]:
+    lines = [
+        "JSONB GIN Operator Class Benchmark",
+        f"Query: {result.query_name}",
+        f"Containment filter: {result.containment_filter}",
+        "Comparisons:",
+    ]
+    lines.extend(
+        (
+            f"- {comparison.opclass}: "
+            f"rows={comparison.table_rows} "
+            f"matches={comparison.matched_rows} "
+            f"index_size={comparison.index_size_pretty} "
+            f"root_node={comparison.plan.root_node_type} "
+            f"indexes={','.join(comparison.plan.index_names)} "
+            f"execution_time_ms={comparison.plan.execution_time_ms}"
+        )
+        for comparison in result.comparisons
+    )
+    lines.extend(
+        [
+            f"JSON report: {result.report.json_path}",
+            f"Markdown report: {result.report.markdown_path}",
+        ]
+    )
+    return lines
+
+
+def run_benchmark_jsonb_indexes(args: Namespace) -> int:
+    result = run_jsonb_index_benchmark(
+        symbol=args.symbol,
+        binance_limit=args.binance_limit,
+    )
+    for line in format_jsonb_index_benchmark(result):
+        print(line)
+
+    if any(comparison.matched_rows == 0 for comparison in result.comparisons):
+        return 1
+
+    return 0
+
+
 def format_search_document_smoke(result: SearchDocumentSmokeResult) -> list[str]:
     lines = [
         "Search Document Smoke",
@@ -573,6 +626,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "jsonb-document-smoke":
         return run_jsonb_documents(args)
+
+    if args.command == "benchmark-jsonb-indexes":
+        return run_benchmark_jsonb_indexes(args)
 
     if args.command == "search-document-smoke":
         return run_search_documents(args)
