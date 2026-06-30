@@ -13,6 +13,7 @@ from quantgres.experiments.jsonb_documents import (
     JsonbDocumentSmokeResult,
     run_jsonb_document_smoke,
 )
+from quantgres.experiments.queue_jobs import QueueSmokeResult, run_queue_smoke
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_paper_trace import (
     BinancePaperTraceSmokeResult,
@@ -109,6 +110,11 @@ def build_parser() -> ArgumentParser:
     search_smoke.add_argument("--query", default="pancakeswap swap")
     search_smoke.add_argument("--fuzzy", default="0x16b9a82891338f9b")
     search_smoke.add_argument("--limit", type=int, default=5)
+
+    subparsers.add_parser(
+        "queue-smoke",
+        help="Run a PostgreSQL SKIP LOCKED ingestion queue smoke test.",
+    )
 
     return parser
 
@@ -426,6 +432,51 @@ def run_search_documents(args: Namespace) -> int:
     return 0
 
 
+def format_queue_smoke(result: QueueSmokeResult) -> list[str]:
+    lines = [
+        "QueueDB Smoke",
+        (
+            f"First claim: worker={result.first_claim.locked_by} "
+            f"job={result.first_claim.idempotency_key} "
+            f"attempts={result.first_claim.attempts}"
+        ),
+        (
+            f"Second claim: worker={result.second_claim.locked_by} "
+            f"job={result.second_claim.idempotency_key} "
+            f"attempts={result.second_claim.attempts}"
+        ),
+        (
+            f"Retry claim: worker={result.retry_claim.locked_by} "
+            f"job={result.retry_claim.idempotency_key} "
+            f"attempts={result.retry_claim.attempts}"
+        ),
+        "Final statuses:",
+    ]
+    lines.extend(
+        (
+            f"- {status.idempotency_key} status={status.status} "
+            f"attempts={status.attempts}/{status.max_attempts} "
+            f"last_error={status.last_error}"
+        )
+        for status in result.statuses
+    )
+    return lines
+
+
+def run_queue_jobs() -> int:
+    result = run_queue_smoke()
+    for line in format_queue_smoke(result):
+        print(line)
+
+    statuses = {status.idempotency_key: status.status for status in result.statuses}
+    if statuses.get("binance:BTCUSDT:1m:60") != "completed":
+        return 1
+    if statuses.get("bnb:pancakeswap-v2-wbnb-usdt:swap:107270817") != "dead_letter":
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -462,6 +513,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "search-document-smoke":
         return run_search_documents(args)
+
+    if args.command == "queue-smoke":
+        return run_queue_jobs()
 
     parser.print_help()
     return 0
