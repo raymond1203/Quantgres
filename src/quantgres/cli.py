@@ -9,6 +9,10 @@ from quantgres.experiments.binance_candles import (
     fetch_and_store_binance_klines,
 )
 from quantgres.experiments.bnb_raw_logs import BnbLogIngestionResult, fetch_and_store_bnb_logs
+from quantgres.experiments.jsonb_documents import (
+    JsonbDocumentSmokeResult,
+    run_jsonb_document_smoke,
+)
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_paper_trace import (
     BinancePaperTraceSmokeResult,
@@ -86,6 +90,13 @@ def build_parser() -> ArgumentParser:
     ingest_bnb_logs.add_argument("--to-block", required=True)
     ingest_bnb_logs.add_argument("--address")
     ingest_bnb_logs.add_argument("--topic0")
+
+    jsonb_smoke = subparsers.add_parser(
+        "jsonb-document-smoke",
+        help="Store real Binance and BNB RPC payloads as JSONB documents and query them.",
+    )
+    jsonb_smoke.add_argument("--symbol", default="BTCUSDT")
+    jsonb_smoke.add_argument("--document-limit", type=int, default=10)
 
     return parser
 
@@ -325,6 +336,41 @@ def run_ingest_bnb_logs(args: Namespace) -> int:
     return 0
 
 
+def format_jsonb_document_smoke(result: JsonbDocumentSmokeResult) -> list[str]:
+    lines = [
+        "JSONB Document Store Smoke",
+        f"Binance documents upserted: {result.binance_documents_upserted}",
+        f"BNB documents upserted: {result.bnb_documents_upserted}",
+        "Source counts:",
+    ]
+    lines.extend(f"- {source}: {count}" for source, count in result.source_counts)
+    lines.extend(
+        [
+            f"BNB containment count: {result.bnb_containment_count}",
+            (
+                f"Plan: root_node={result.plan.root_node_type} "
+                f"planning_time_ms={result.plan.planning_time_ms} "
+                f"execution_time_ms={result.plan.execution_time_ms}"
+            ),
+        ]
+    )
+    return lines
+
+
+def run_jsonb_documents(args: Namespace) -> int:
+    result = run_jsonb_document_smoke(
+        symbol=args.symbol,
+        document_limit=args.document_limit,
+    )
+    for line in format_jsonb_document_smoke(result):
+        print(line)
+
+    if result.bnb_containment_count == 0:
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -355,6 +401,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "ingest-bnb-logs":
         return run_ingest_bnb_logs(args)
+
+    if args.command == "jsonb-document-smoke":
+        return run_jsonb_documents(args)
 
     parser.print_help()
     return 0
