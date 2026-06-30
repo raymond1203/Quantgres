@@ -1,0 +1,12 @@
+.codex/
+.agents/
+
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.ty/
+
+data/generated/
+reports/generated/
