@@ -59,6 +59,11 @@ The QueueDB track models ingestion orchestration:
 job payloads -> `queue.ingestion_jobs` -> `FOR UPDATE SKIP LOCKED` worker claim
 -> retry and dead-letter state transitions.
 
+The first CacheDB track uses a materialized view for repeated summary lookup:
+`time_series.candles_1m` plus `defi.swap_events` ->
+`cache.market_onchain_summary` -> indexed summary read compared with a base
+aggregate query.
+
 ## Phase 2: Backend System Patterns
 
 5. Search DB / Full-Text, Trigram, Hybrid Search
