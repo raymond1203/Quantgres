@@ -50,6 +50,11 @@ def test_build_worker_jobs_uses_isolated_prefix_and_real_payloads():
     assert worker_prefix("test") == "worker:ingestion:test:"
 
 
+def test_worker_prefix_rejects_like_wildcards():
+    with pytest.raises(ValueError, match="run_key"):
+        worker_prefix("bad%key")
+
+
 def test_payload_int_rejects_bool_values():
     with pytest.raises(ValueError, match="integer payload field"):
         payload_int({"limit": True}, "limit")

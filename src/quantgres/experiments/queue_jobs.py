@@ -1,3 +1,4 @@
+import re
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ from quantgres.experiments.bnb_swap_projection import (
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 QUEUE_SQL_DIR = PROJECT_ROOT / "sql" / "queue"
 QUEUE_SCHEMA_SQL = QUEUE_SQL_DIR / "001_ingestion_jobs_schema.sql"
+RUN_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 SEED_JOB_SQL = """
 INSERT INTO queue.ingestion_jobs (
@@ -340,11 +342,18 @@ def seed_queue_fixture(database_url: str | None = None) -> None:
 
 
 def benchmark_prefix(run_key: str) -> str:
+    validate_run_key(run_key)
     return f"benchmark:queue-skip-locked:{run_key}:"
 
 
 def worker_prefix(run_key: str) -> str:
+    validate_run_key(run_key)
     return f"worker:ingestion:{run_key}:"
+
+
+def validate_run_key(run_key: str) -> None:
+    if not RUN_KEY_PATTERN.fullmatch(run_key):
+        raise ValueError("run_key must contain only letters, numbers, '.', '_' or '-'.")
 
 
 def build_worker_jobs(

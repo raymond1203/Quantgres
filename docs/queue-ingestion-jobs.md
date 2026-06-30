@@ -55,7 +55,9 @@ The worker smoke uses an idempotency prefix:
 - `worker:ingestion:{run_key}:`
 
 This keeps the worker from claiming benchmark jobs, manual fixtures, or other
-available queue rows. The current worker dispatch table is intentionally small:
+available queue rows. The `run_key` accepts only letters, numbers, `.`, `_`,
+and `-` so the SQL `LIKE` prefix claim cannot be widened by wildcard
+characters. The current worker dispatch table is intentionally small:
 
 - `binance_klines`: fetches Binance public klines and stores them in
   `time_series.candles_1m`
