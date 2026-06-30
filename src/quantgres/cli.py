@@ -21,6 +21,7 @@ from quantgres.experiments.cache_summary import (
     CacheSummarySmokeResult,
     run_cache_summary_smoke,
 )
+from quantgres.experiments.event_store import EventStoreSmokeResult, run_event_store_smoke
 from quantgres.experiments.jsonb_documents import (
     JsonbDocumentSmokeResult,
     run_jsonb_document_smoke,
@@ -175,6 +176,12 @@ def build_parser() -> ArgumentParser:
     olap_panel.add_argument("--symbol", default="BTCUSDT")
     olap_panel.add_argument("--binance-limit", type=int, default=500)
     olap_panel.add_argument("--limit", type=int, default=5)
+
+    event_store = subparsers.add_parser(
+        "event-store-smoke",
+        help="Append real OLAP and vector retrieval results into an audit event store.",
+    )
+    event_store.add_argument("--query", default="pancakeswap swap bnb chain")
 
     subparsers.add_parser(
         "queue-smoke",
@@ -712,6 +719,53 @@ def run_olap_return_panel(args: Namespace) -> int:
     return 0
 
 
+def format_event_store_smoke(result: EventStoreSmokeResult) -> list[str]:
+    lines = [
+        "Event Store Smoke",
+        f"Inserted events: {result.inserted_events}",
+        f"Skipped events: {result.skipped_events}",
+        f"Payload match count: {result.payload_match_count}",
+        "Subject events:",
+    ]
+    lines.extend(
+        (
+            f"- {row.event_type} subject={row.subject_type}:{row.subject_id} "
+            f"occurred_at={row.occurred_at} event_id={row.event_id}"
+        )
+        for row in result.subject_events
+    )
+    lines.extend(
+        [
+            (
+                f"Subject plan: root_node={result.subject_plan.root_node_type} "
+                f"indexes={','.join(result.subject_plan.index_names)} "
+                f"planning_time_ms={result.subject_plan.planning_time_ms} "
+                f"execution_time_ms={result.subject_plan.execution_time_ms}"
+            ),
+            (
+                f"Payload plan: root_node={result.payload_plan.root_node_type} "
+                f"indexes={','.join(result.payload_plan.index_names)} "
+                f"planning_time_ms={result.payload_plan.planning_time_ms} "
+                f"execution_time_ms={result.payload_plan.execution_time_ms}"
+            ),
+        ]
+    )
+    return lines
+
+
+def run_event_store(args: Namespace) -> int:
+    result = run_event_store_smoke(query=args.query)
+    for line in format_event_store_smoke(result):
+        print(line)
+
+    if result.inserted_events == 0 and result.skipped_events == 0:
+        return 1
+    if not result.subject_events or result.payload_match_count == 0:
+        return 1
+
+    return 0
+
+
 def format_queue_smoke(result: QueueSmokeResult) -> list[str]:
     lines = [
         "QueueDB Smoke",
@@ -808,6 +862,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "olap-return-panel-smoke":
         return run_olap_return_panel(args)
+
+    if args.command == "event-store-smoke":
+        return run_event_store(args)
 
     if args.command == "queue-smoke":
         return run_queue_jobs()
