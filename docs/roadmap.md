@@ -55,6 +55,10 @@ memory chunks:
 search with an HNSW index. This proves pgvector mechanics before introducing a
 real embedding model.
 
+The first hybrid retrieval track combines SearchDB and VectorDB candidates:
+`search.search_documents` plus `memory.agent_memory_chunks` -> weighted
+full-text, trigram, and vector scores in one retrieval result.
+
 The QueueDB track models ingestion orchestration:
 job payloads -> `queue.ingestion_jobs` -> `FOR UPDATE SKIP LOCKED` worker claim
 -> retry and dead-letter state transitions.

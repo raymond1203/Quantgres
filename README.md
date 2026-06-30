@@ -99,6 +99,7 @@ uv run quantgres cache-summary-smoke
 uv run quantgres olap-return-panel-smoke
 uv run quantgres event-store-smoke
 uv run quantgres feature-store-smoke
+uv run quantgres hybrid-retrieval-smoke
 uv run quantgres queue-smoke
 ```
 
