@@ -7,7 +7,7 @@ domain context for realistic PostgreSQL experiments.
 
 - uv, ruff, ty, pytest
 - psycopg 3 and raw SQL first
-- Docker Compose PostgreSQL with pgvector
+- Docker Compose PostgreSQL 18 with pgvector 0.8.3
 - SQL directory conventions
 - benchmark/reporting conventions
 

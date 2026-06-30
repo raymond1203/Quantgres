@@ -28,7 +28,7 @@ schemas, SQL, query plans, indexes, and benchmark results visible.
 - ty
 - pytest
 - psycopg 3
-- PostgreSQL with pgvector
+- PostgreSQL 18 with pgvector 0.8.3
 
 ## Local Setup
 
@@ -55,6 +55,10 @@ Start local PostgreSQL:
 ```powershell
 docker compose up -d db
 ```
+
+The local database image is pinned to `pgvector/pgvector:0.8.3-pg18-trixie`.
+Benchmark writeups should record the exact server output from `SELECT version()`
+because PostgreSQL minor versions can affect query plans and performance.
 
 Run the CLI smoke check:
 
