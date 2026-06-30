@@ -98,6 +98,7 @@ uv run quantgres vector-memory-smoke --query "pancakeswap swap bnb chain"
 uv run quantgres cache-summary-smoke
 uv run quantgres olap-return-panel-smoke
 uv run quantgres event-store-smoke
+uv run quantgres feature-store-smoke
 uv run quantgres queue-smoke
 ```
 
