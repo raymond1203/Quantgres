@@ -94,7 +94,9 @@ BEGIN
     END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS candles_1m_symbol_ts_covering_idx
+DROP INDEX IF EXISTS time_series.candles_1m_symbol_ts_covering_idx;
+
+CREATE INDEX candles_1m_symbol_ts_covering_idx
     ON time_series.candles_1m (symbol, ts DESC)
     INCLUDE (open_price, high_price, low_price, close_price, volume, quote_volume);
 

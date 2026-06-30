@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from quantgres.market_data.binance import build_klines_url, parse_kline_row
 
 
@@ -19,6 +21,11 @@ def test_build_klines_url_uses_public_market_data_endpoint():
     assert "limit=10" in url
     assert "startTime=1700000000000" in url
     assert "endTime=1700000060000" in url
+
+
+def test_build_klines_url_rejects_invalid_limit():
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        build_klines_url(symbol="BTCUSDT", interval="1m", limit=1001)
 
 
 def test_parse_kline_row_maps_binance_response_fields():

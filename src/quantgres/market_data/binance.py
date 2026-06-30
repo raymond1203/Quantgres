@@ -62,6 +62,9 @@ def build_klines_url(
     start_time_ms: int | None = None,
     end_time_ms: int | None = None,
 ) -> str:
+    if not 1 <= limit <= 1000:
+        raise ValueError("Binance kline limit must be between 1 and 1000.")
+
     params: dict[str, str | int] = {
         "symbol": symbol.upper(),
         "interval": interval,
