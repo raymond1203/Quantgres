@@ -1,12 +1,10 @@
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
 
 import psycopg
-from psycopg.abc import QueryNoTemplate
 
-from quantgres.db import connect
+from quantgres.db import connect, query_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SQL_DIR = PROJECT_ROOT / "sql" / "rdb"
@@ -53,10 +51,6 @@ class TradingLedgerSmokeResult:
 
 def read_sql(path: Path) -> str:
     return path.read_text(encoding="utf-8")
-
-
-def query_text(sql: str) -> QueryNoTemplate:
-    return cast("QueryNoTemplate", sql)
 
 
 def apply_schema_and_fixture(database_url: str | None = None) -> None:
