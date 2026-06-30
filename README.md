@@ -59,12 +59,15 @@ docker compose up -d db
 The local database image is pinned to `pgvector/pgvector:0.8.3-pg18-trixie`.
 Benchmark writeups should record the exact server output from `SELECT version()`
 because PostgreSQL minor versions can affect query plans and performance.
+The container listens on PostgreSQL port `5432` internally and maps to host port
+`55432` to avoid conflicts with locally installed PostgreSQL.
 
 Run the CLI smoke check:
 
 ```powershell
 uv run quantgres doctor
 uv run quantgres doctor --check-db
+uv run quantgres db-info
 ```
 
 ## Project Layout

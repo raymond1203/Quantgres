@@ -60,6 +60,10 @@ documentation as fallback and record that fallback explicitly.
 - Context7 library ID: `/docker/compose`
 - Finding: Compose supports service definitions, images, ports, named volumes,
   bind mounts, and `docker compose config` validation.
+- PostgreSQL 18 image note: docker-library/postgres changed 18+ images to use
+  major-version-specific data directories under `/var/lib/postgresql`, so the
+  named volume must be mounted at `/var/lib/postgresql` instead of
+  `/var/lib/postgresql/data`.
 - Decision: use Docker Compose for local PostgreSQL only; avoid adding extra
   infrastructure until an experiment needs it.
 
@@ -87,5 +91,7 @@ documentation as fallback and record that fallback explicitly.
 - Astral docs: https://docs.astral.sh/
 - psycopg 3 docs: https://www.psycopg.org/psycopg3/docs/
 - Docker Compose docs: https://docs.docker.com/compose/
+- docker-library/postgres PGDATA change: https://github.com/docker-library/postgres/pull/1259
+- docker-library/postgres upgrade discussion: https://github.com/docker-library/postgres/issues/37
 - pytest docs: https://docs.pytest.org/
 - Hatch docs: https://hatch.pypa.io/
