@@ -69,6 +69,10 @@ The first OLAP track builds an analytics panel with window functions:
 `analytics.market_return_panel` -> return bps, rolling return, and swap
 aggregate metrics.
 
+The first Event Store track records real workflow observations:
+`analytics.market_return_panel` plus `memory.agent_memory_chunks` ->
+`event_store.agent_events` append-oriented audit records.
+
 ## Phase 2: Backend System Patterns
 
 5. Search DB / Full-Text, Trigram, Hybrid Search
