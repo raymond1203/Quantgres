@@ -25,6 +25,12 @@ from quantgres.experiments.cache_summary import (
     CacheSummarySmokeResult,
     run_cache_summary_smoke,
 )
+from quantgres.experiments.embedding_comparison import (
+    DEFAULT_FASTEMBED_MODEL,
+    MODEL_VECTOR_INDEX_NAME,
+    EmbeddingComparisonSmokeResult,
+    run_embedding_comparison_smoke,
+)
 from quantgres.experiments.event_store import EventStoreSmokeResult, run_event_store_smoke
 from quantgres.experiments.feature_batches import (
     BATCH_ASOF_INDEX_NAME,
@@ -196,6 +202,15 @@ def build_parser() -> ArgumentParser:
     vector_memory.add_argument("--query", default="pancakeswap swap bnb chain")
     vector_memory.add_argument("--source-limit", type=int, default=1000)
     vector_memory.add_argument("--limit", type=int, default=5)
+
+    embedding_comparison = subparsers.add_parser(
+        "embedding-comparison-smoke",
+        help="Compare deterministic pgvector memory with real fastembed model retrieval.",
+    )
+    embedding_comparison.add_argument("--query", default="pancakeswap swap bnb chain")
+    embedding_comparison.add_argument("--model-name", default=DEFAULT_FASTEMBED_MODEL)
+    embedding_comparison.add_argument("--source-limit", type=int, default=100)
+    embedding_comparison.add_argument("--limit", type=int, default=5)
 
     cache_summary = subparsers.add_parser(
         "cache-summary-smoke",
@@ -755,6 +770,64 @@ def run_vector_memory(args: Namespace) -> int:
     return 0
 
 
+def format_embedding_comparison_smoke(result: EmbeddingComparisonSmokeResult) -> list[str]:
+    lines = [
+        "Embedding Comparison Smoke",
+        f"Model: {result.embedding_model}",
+        f"Embedding dimensions: {result.embedding_dimensions}",
+        f"Projected model chunks: {result.projected_model_chunks}",
+        f"Total model chunks: {result.total_model_chunks}",
+        f"Query: {result.query_text}",
+        (
+            f"Top overlap: {result.top_overlap_count}/"
+            f"{len(result.deterministic_results)} deterministic results"
+        ),
+        "Deterministic hash results:",
+    ]
+    lines.extend(
+        (
+            f"- {row.source} {row.title} "
+            f"similarity={row.cosine_similarity:.6f} "
+            f"external_id={row.external_id}"
+        )
+        for row in result.deterministic_results
+    )
+    lines.append("Real embedding results:")
+    lines.extend(
+        (
+            f"- {row.source} {row.title} "
+            f"similarity={row.cosine_similarity:.6f} "
+            f"external_id={row.external_id}"
+        )
+        for row in result.model_results
+    )
+    lines.append(
+        f"Plan: root_node={result.plan.root_node_type} "
+        f"indexes={','.join(result.plan.index_names)} "
+        f"planning_time_ms={result.plan.planning_time_ms} "
+        f"execution_time_ms={result.plan.execution_time_ms}"
+    )
+    return lines
+
+
+def run_embedding_comparison(args: Namespace) -> int:
+    result = run_embedding_comparison_smoke(
+        query=args.query,
+        model_name=args.model_name,
+        source_limit=args.source_limit,
+        result_limit=args.limit,
+    )
+    for line in format_embedding_comparison_smoke(result):
+        print(line)
+
+    if not result.model_results:
+        return 1
+    if MODEL_VECTOR_INDEX_NAME not in result.plan.index_names:
+        return 1
+
+    return 0
+
+
 def format_cache_summary_smoke(result: CacheSummarySmokeResult) -> list[str]:
     summary = result.selected_summary
     metrics = summary.metrics
@@ -1174,6 +1247,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "vector-memory-smoke":
         return run_vector_memory(args)
+
+    if args.command == "embedding-comparison-smoke":
+        return run_embedding_comparison(args)
 
     if args.command == "cache-summary-smoke":
         return run_cache_summary(args)
