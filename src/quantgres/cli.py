@@ -26,6 +26,11 @@ from quantgres.experiments.cache_summary import (
     run_cache_summary_smoke,
 )
 from quantgres.experiments.event_store import EventStoreSmokeResult, run_event_store_smoke
+from quantgres.experiments.feature_batches import (
+    BATCH_ASOF_INDEX_NAME,
+    FeatureBatchSmokeResult,
+    run_feature_batch_smoke,
+)
 from quantgres.experiments.feature_store import (
     ASOF_INDEX_NAME,
     FeatureStoreSmokeResult,
@@ -223,6 +228,16 @@ def build_parser() -> ArgumentParser:
     feature_store.add_argument("--binance-limit", type=int, default=500)
     feature_store.add_argument("--source-limit", type=int, default=100)
     feature_store.add_argument("--as-of")
+
+    feature_batch = subparsers.add_parser(
+        "feature-batch-smoke",
+        help="Write immutable point-in-time feature batch rows and run an as-of lookup.",
+    )
+    feature_batch.add_argument("--symbol", default="BTCUSDT")
+    feature_batch.add_argument("--feature-set", default="market_return_v1")
+    feature_batch.add_argument("--run-key", default="default")
+    feature_batch.add_argument("--binance-limit", type=int, default=500)
+    feature_batch.add_argument("--source-limit", type=int, default=50)
 
     hybrid_retrieval = subparsers.add_parser(
         "hybrid-retrieval-smoke",
@@ -921,6 +936,54 @@ def run_feature_store(args: Namespace) -> int:
     return 0
 
 
+def format_feature_batch_smoke(result: FeatureBatchSmokeResult) -> list[str]:
+    item = result.as_of_item
+    return [
+        "Feature Batch Smoke",
+        f"Batch id: {result.batch_id}",
+        f"Feature set: {result.feature_set}",
+        f"Source rows: {result.source_rows}",
+        f"Inserted batch: {result.inserted_batch}",
+        f"Inserted items: {result.inserted_items}",
+        f"Total batch items: {result.total_batch_items}",
+        f"As of: {result.as_of_ts}",
+        (
+            f"Feature: symbol={item.symbol} "
+            f"event_ts={item.event_ts} "
+            f"feature_ts={item.feature_ts} "
+            f"close={item.close_price} "
+            f"return_bps={item.return_bps} "
+            f"rolling_5_return_bps={item.rolling_5_return_bps} "
+            f"swap_count={item.swap_count}"
+        ),
+        (
+            f"Plan: root_node={result.plan.root_node_type} "
+            f"indexes={','.join(result.plan.index_names)} "
+            f"planning_time_ms={result.plan.planning_time_ms} "
+            f"execution_time_ms={result.plan.execution_time_ms}"
+        ),
+    ]
+
+
+def run_feature_batch(args: Namespace) -> int:
+    result = run_feature_batch_smoke(
+        symbol=args.symbol,
+        feature_set=args.feature_set,
+        run_key=args.run_key,
+        binance_limit=args.binance_limit,
+        source_limit=args.source_limit,
+    )
+    for line in format_feature_batch_smoke(result):
+        print(line)
+
+    if result.total_batch_items == 0:
+        return 1
+    if BATCH_ASOF_INDEX_NAME not in result.plan.index_names:
+        return 1
+
+    return 0
+
+
 def format_hybrid_retrieval_smoke(result: HybridRetrievalSmokeResult) -> list[str]:
     lines = [
         "Hybrid Retrieval Smoke",
@@ -1123,6 +1186,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "feature-store-smoke":
         return run_feature_store(args)
+
+    if args.command == "feature-batch-smoke":
+        return run_feature_batch(args)
 
     if args.command == "hybrid-retrieval-smoke":
         return run_hybrid_retrieval(args)
