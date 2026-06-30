@@ -22,6 +22,11 @@ from quantgres.experiments.cache_summary import (
     run_cache_summary_smoke,
 )
 from quantgres.experiments.event_store import EventStoreSmokeResult, run_event_store_smoke
+from quantgres.experiments.feature_store import (
+    ASOF_INDEX_NAME,
+    FeatureStoreSmokeResult,
+    run_feature_store_smoke,
+)
 from quantgres.experiments.jsonb_documents import (
     JsonbDocumentSmokeResult,
     run_jsonb_document_smoke,
@@ -182,6 +187,16 @@ def build_parser() -> ArgumentParser:
         help="Append real OLAP and vector retrieval results into an audit event store.",
     )
     event_store.add_argument("--query", default="pancakeswap swap bnb chain")
+
+    feature_store = subparsers.add_parser(
+        "feature-store-smoke",
+        help="Build point-in-time quant feature snapshots and run an as-of lookup.",
+    )
+    feature_store.add_argument("--symbol", default="BTCUSDT")
+    feature_store.add_argument("--feature-set", default="market_return_v1")
+    feature_store.add_argument("--binance-limit", type=int, default=500)
+    feature_store.add_argument("--source-limit", type=int, default=100)
+    feature_store.add_argument("--as-of")
 
     subparsers.add_parser(
         "queue-smoke",
@@ -766,6 +781,54 @@ def run_event_store(args: Namespace) -> int:
     return 0
 
 
+def format_feature_store_smoke(result: FeatureStoreSmokeResult) -> list[str]:
+    feature = result.as_of_feature
+    return [
+        "Feature Store Smoke",
+        f"Binance rows fetched: {result.olap_result.binance_ingestion.rows_fetched}",
+        f"OLAP panel rows: {result.olap_result.panel_rows}",
+        f"Feature set: {result.feature_set}",
+        f"Source rows: {result.source_rows}",
+        f"Upserted snapshots: {result.upserted_snapshots}",
+        f"Total snapshots: {result.total_snapshots}",
+        f"As of: {result.as_of_ts}",
+        (
+            f"Feature: symbol={feature.symbol} "
+            f"event_ts={feature.event_ts} "
+            f"feature_ts={feature.feature_ts} "
+            f"close={feature.close_price} "
+            f"return_bps={feature.return_bps} "
+            f"rolling_5_return_bps={feature.rolling_5_return_bps} "
+            f"swap_count={feature.swap_count}"
+        ),
+        (
+            f"Plan: root_node={result.plan.root_node_type} "
+            f"indexes={','.join(result.plan.index_names)} "
+            f"planning_time_ms={result.plan.planning_time_ms} "
+            f"execution_time_ms={result.plan.execution_time_ms}"
+        ),
+    ]
+
+
+def run_feature_store(args: Namespace) -> int:
+    result = run_feature_store_smoke(
+        symbol=args.symbol,
+        feature_set=args.feature_set,
+        binance_limit=args.binance_limit,
+        source_limit=args.source_limit,
+        as_of_ts=args.as_of,
+    )
+    for line in format_feature_store_smoke(result):
+        print(line)
+
+    if result.upserted_snapshots == 0 or result.total_snapshots == 0:
+        return 1
+    if ASOF_INDEX_NAME not in result.plan.index_names:
+        return 1
+
+    return 0
+
+
 def format_queue_smoke(result: QueueSmokeResult) -> list[str]:
     lines = [
         "QueueDB Smoke",
@@ -865,6 +928,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "event-store-smoke":
         return run_event_store(args)
+
+    if args.command == "feature-store-smoke":
+        return run_feature_store(args)
 
     if args.command == "queue-smoke":
         return run_queue_jobs()
