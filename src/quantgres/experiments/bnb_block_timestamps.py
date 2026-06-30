@@ -1,6 +1,8 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from time import sleep
+from typing import Any, Protocol
 
 from psycopg.types.json import Jsonb
 
@@ -111,6 +113,46 @@ WHERE chain_id = %(chain_id)s
 ORDER BY block_number
 """
 
+SELECT_CACHED_BLOCK_NUMBERS_SQL = """
+SELECT block_number
+FROM onchain.blocks
+WHERE chain_id = %(chain_id)s
+  AND block_number BETWEEN %(from_block)s AND %(to_block)s
+ORDER BY block_number
+"""
+
+
+class BlockFetcher(Protocol):
+    def __call__(
+        self,
+        *,
+        rpc_url: str,
+        chain_id: int,
+        block_number: int,
+        include_transactions: bool = False,
+    ) -> BnbBlock: ...
+
+
+@dataclass(frozen=True)
+class BlockFetchPolicy:
+    max_attempts: int = 3
+    retry_sleep_seconds: float = 0.25
+
+
+@dataclass(frozen=True)
+class BlockFetchFailure:
+    block_number: int
+    attempts: int
+    error_type: str
+    message: str
+
+
+class BlockFetchRetryError(RuntimeError):
+    def __init__(self, failures: tuple[BlockFetchFailure, ...]) -> None:
+        self.failures = failures
+        failed_blocks = ", ".join(str(failure.block_number) for failure in failures)
+        super().__init__(f"Failed to fetch BNB blocks after retries: {failed_blocks}")
+
 
 @dataclass(frozen=True)
 class EnrichedSwapEventRow:
@@ -126,6 +168,9 @@ class EnrichedSwapEventRow:
 @dataclass(frozen=True)
 class BnbBlockTimestampSmokeResult:
     swap_projection: BnbSwapProjectionSmokeResult
+    requested_block_numbers: tuple[int, ...]
+    cached_block_numbers: tuple[int, ...]
+    missing_block_numbers: tuple[int, ...]
     fetched_blocks: tuple[BnbBlock, ...]
     upserted_blocks: int
     updated_swaps: int
@@ -211,21 +256,133 @@ def enrich_swap_event_timestamps(
         return cursor.rowcount
 
 
+def validate_block_fetch_policy(policy: BlockFetchPolicy) -> None:
+    if policy.max_attempts <= 0:
+        raise ValueError("max_attempts must be positive.")
+    if policy.retry_sleep_seconds < 0:
+        raise ValueError("retry_sleep_seconds must be non-negative.")
+
+
+def block_fetch_failure(
+    *,
+    block_number: int,
+    attempts: int,
+    error: Exception,
+) -> BlockFetchFailure:
+    return BlockFetchFailure(
+        block_number=block_number,
+        attempts=attempts,
+        error_type=type(error).__name__,
+        message=str(error),
+    )
+
+
+def fetch_block_with_retries(
+    *,
+    block_number: int,
+    rpc_url: str,
+    chain_id: int,
+    policy: BlockFetchPolicy | None = None,
+    fetcher: BlockFetcher = get_block_by_number,
+    sleeper: Callable[[float], None] = sleep,
+) -> BnbBlock:
+    policy = policy or BlockFetchPolicy()
+    validate_block_fetch_policy(policy)
+    last_error: Exception | None = None
+
+    for attempt in range(1, policy.max_attempts + 1):
+        try:
+            return fetcher(
+                rpc_url=rpc_url,
+                chain_id=chain_id,
+                block_number=block_number,
+                include_transactions=False,
+            )
+        except Exception as error:
+            last_error = error
+            if attempt < policy.max_attempts and policy.retry_sleep_seconds > 0:
+                sleeper(policy.retry_sleep_seconds * attempt)
+
+    if last_error is None:
+        raise RuntimeError("Block fetch retry loop ended without an error.")
+
+    raise BlockFetchRetryError(
+        (
+            block_fetch_failure(
+                block_number=block_number,
+                attempts=policy.max_attempts,
+                error=last_error,
+            ),
+        )
+    )
+
+
 def fetch_blocks(
     *,
     block_numbers: tuple[int, ...],
     rpc_url: str,
     chain_id: int,
+    policy: BlockFetchPolicy | None = None,
+    fetcher: BlockFetcher = get_block_by_number,
+    sleeper: Callable[[float], None] = sleep,
 ) -> tuple[BnbBlock, ...]:
+    policy = policy or BlockFetchPolicy()
+    validate_block_fetch_policy(policy)
+    blocks: list[BnbBlock] = []
+    failures: list[BlockFetchFailure] = []
+
+    for block_number in block_numbers:
+        try:
+            blocks.append(
+                fetch_block_with_retries(
+                    block_number=block_number,
+                    rpc_url=rpc_url,
+                    chain_id=chain_id,
+                    policy=policy,
+                    fetcher=fetcher,
+                    sleeper=sleeper,
+                )
+            )
+        except BlockFetchRetryError as error:
+            failures.extend(error.failures)
+
+    if failures:
+        raise BlockFetchRetryError(tuple(failures))
+
+    return tuple(blocks)
+
+
+def select_missing_block_numbers(
+    *,
+    requested_block_numbers: tuple[int, ...],
+    cached_block_numbers: tuple[int, ...],
+) -> tuple[int, ...]:
+    cached = set(cached_block_numbers)
     return tuple(
-        get_block_by_number(
-            rpc_url=rpc_url,
-            chain_id=chain_id,
-            block_number=block_number,
-            include_transactions=False,
-        )
-        for block_number in block_numbers
+        block_number for block_number in requested_block_numbers if block_number not in cached
     )
+
+
+def load_cached_block_numbers(
+    *,
+    from_block: int,
+    to_block: int,
+    chain_id: int = BNB_CHAIN_ID,
+    database_url: str | None = None,
+) -> tuple[int, ...]:
+    ensure_block_timestamp_schema(database_url)
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            query_text(SELECT_CACHED_BLOCK_NUMBERS_SQL),
+            {
+                "chain_id": chain_id,
+                "from_block": from_block,
+                "to_block": to_block,
+            },
+        )
+        rows = cursor.fetchall()
+
+    return tuple(int(row[0]) for row in rows)
 
 
 def count_blocks(
@@ -357,6 +514,7 @@ def run_bnb_block_timestamp_smoke(
     pair_address: str = PANCAKESWAP_V2_WBNB_USDT_PAIR,
     topic0: str = PANCAKESWAP_V2_SWAP_TOPIC0,
     rpc_url: str = DEFAULT_BNB_RPC_URL,
+    block_fetch_policy: BlockFetchPolicy | None = None,
     database_url: str | None = None,
 ) -> BnbBlockTimestampSmokeResult:
     info = load_bnb_rpc_info(rpc_url=rpc_url)
@@ -378,10 +536,26 @@ def run_bnb_block_timestamp_smoke(
         pair_address=pair_address,
         database_url=database_url,
     )
+    requested_block_set = set(block_numbers)
+    cached_block_numbers = tuple(
+        block_number
+        for block_number in load_cached_block_numbers(
+            from_block=from_block,
+            to_block=to_block,
+            chain_id=info.chain_id,
+            database_url=database_url,
+        )
+        if block_number in requested_block_set
+    )
+    missing_block_numbers = select_missing_block_numbers(
+        requested_block_numbers=block_numbers,
+        cached_block_numbers=cached_block_numbers,
+    )
     blocks = fetch_blocks(
-        block_numbers=block_numbers,
+        block_numbers=missing_block_numbers,
         rpc_url=rpc_url,
         chain_id=info.chain_id,
+        policy=block_fetch_policy,
     )
     upserted_blocks = upsert_blocks(blocks, database_url)
     updated_swaps = enrich_swap_event_timestamps(
@@ -394,6 +568,9 @@ def run_bnb_block_timestamp_smoke(
 
     return BnbBlockTimestampSmokeResult(
         swap_projection=swap_projection,
+        requested_block_numbers=block_numbers,
+        cached_block_numbers=cached_block_numbers,
+        missing_block_numbers=missing_block_numbers,
         fetched_blocks=blocks,
         upserted_blocks=upserted_blocks,
         updated_swaps=updated_swaps,
