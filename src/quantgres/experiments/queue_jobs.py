@@ -1,3 +1,4 @@
+import re
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,10 +8,18 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from quantgres.db import connect, query_text
+from quantgres.experiments.binance_candles import fetch_and_store_binance_klines
+from quantgres.experiments.bnb_block_timestamps import run_bnb_block_timestamp_smoke
+from quantgres.experiments.bnb_swap_projection import (
+    PANCAKESWAP_SAMPLE_BLOCK,
+    PANCAKESWAP_V2_SWAP_TOPIC0,
+    PANCAKESWAP_V2_WBNB_USDT_PAIR,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 QUEUE_SQL_DIR = PROJECT_ROOT / "sql" / "queue"
 QUEUE_SCHEMA_SQL = QUEUE_SQL_DIR / "001_ingestion_jobs_schema.sql"
+RUN_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 SEED_JOB_SQL = """
 INSERT INTO queue.ingestion_jobs (
@@ -121,6 +130,38 @@ RETURNING
     job.locked_by
 """
 
+CLAIM_PREFIX_JOB_SQL = """
+WITH next_job AS (
+    SELECT job_id
+    FROM queue.ingestion_jobs
+    WHERE idempotency_key LIKE %(prefix)s
+      AND status IN ('available', 'failed')
+      AND available_at <= now()
+      AND attempts < max_attempts
+    ORDER BY priority DESC, available_at, job_id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+UPDATE queue.ingestion_jobs AS job
+SET status = 'running',
+    attempts = job.attempts + 1,
+    locked_by = %(worker_id)s,
+    locked_at = now(),
+    updated_at = now()
+FROM next_job
+WHERE job.job_id = next_job.job_id
+RETURNING
+    job.job_id,
+    job.job_kind,
+    job.idempotency_key,
+    job.payload,
+    job.status,
+    job.priority,
+    job.attempts,
+    job.max_attempts,
+    job.locked_by
+"""
+
 COMPLETE_JOB_SQL = """
 UPDATE queue.ingestion_jobs
 SET status = 'completed',
@@ -177,6 +218,20 @@ WHERE idempotency_key LIKE %(prefix)s
   AND status = %(status)s
 """
 
+JOB_STATUS_BY_PREFIX_SQL = """
+SELECT
+    job_kind,
+    idempotency_key,
+    status,
+    attempts,
+    max_attempts,
+    locked_by,
+    last_error
+FROM queue.ingestion_jobs
+WHERE idempotency_key LIKE %(prefix)s
+ORDER BY idempotency_key
+"""
+
 
 @dataclass(frozen=True)
 class QueueJob:
@@ -230,6 +285,25 @@ class QueueBenchmarkResult:
     claims: tuple[QueueBenchmarkClaim, ...]
 
 
+@dataclass(frozen=True)
+class QueueWorkerExecution:
+    worker_id: str
+    job_kind: str
+    idempotency_key: str
+    final_status: str
+    attempts: int
+    summary: dict[str, object]
+
+
+@dataclass(frozen=True)
+class QueueWorkerSmokeResult:
+    run_key: str
+    worker_id: str
+    seeded_jobs: int
+    executions: tuple[QueueWorkerExecution, ...]
+    statuses: tuple[QueueJobStatus, ...]
+
+
 def read_sql(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -268,7 +342,66 @@ def seed_queue_fixture(database_url: str | None = None) -> None:
 
 
 def benchmark_prefix(run_key: str) -> str:
+    validate_run_key(run_key)
     return f"benchmark:queue-skip-locked:{run_key}:"
+
+
+def worker_prefix(run_key: str) -> str:
+    validate_run_key(run_key)
+    return f"worker:ingestion:{run_key}:"
+
+
+def validate_run_key(run_key: str) -> None:
+    if not RUN_KEY_PATTERN.fullmatch(run_key):
+        raise ValueError("run_key must contain only letters, numbers, '.', '_' or '-'.")
+
+
+def build_worker_jobs(
+    *,
+    run_key: str,
+    binance_limit: int = 5,
+) -> tuple[dict[str, object], ...]:
+    if binance_limit <= 0:
+        raise ValueError("binance_limit must be positive.")
+
+    prefix = worker_prefix(run_key)
+    return (
+        {
+            "job_kind": "binance_klines",
+            "idempotency_key": f"{prefix}binance:BTCUSDT:1m:{binance_limit}",
+            "payload": Jsonb({"symbol": "BTCUSDT", "interval": "1m", "limit": binance_limit}),
+            "priority": 20,
+            "max_attempts": 2,
+        },
+        {
+            "job_kind": "bnb_block_timestamp",
+            "idempotency_key": f"{prefix}bnb:block-timestamp:{PANCAKESWAP_SAMPLE_BLOCK}",
+            "payload": Jsonb(
+                {
+                    "from_block": PANCAKESWAP_SAMPLE_BLOCK,
+                    "to_block": PANCAKESWAP_SAMPLE_BLOCK,
+                    "address": PANCAKESWAP_V2_WBNB_USDT_PAIR,
+                    "topic0": PANCAKESWAP_V2_SWAP_TOPIC0,
+                }
+            ),
+            "priority": 10,
+            "max_attempts": 2,
+        },
+    )
+
+
+def seed_queue_worker_jobs(
+    *,
+    run_key: str,
+    binance_limit: int = 5,
+    database_url: str | None = None,
+) -> int:
+    ensure_queue_schema(database_url)
+    jobs = build_worker_jobs(run_key=run_key, binance_limit=binance_limit)
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.executemany(query_text(SEED_JOB_SQL), jobs)
+
+    return len(jobs)
 
 
 def build_benchmark_jobs(
@@ -340,6 +473,28 @@ def job_to_benchmark_claim(job: QueueJob) -> QueueBenchmarkClaim:
 def claim_job(*, worker_id: str, database_url: str | None = None) -> QueueJob | None:
     with connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute(query_text(CLAIM_JOB_SQL), {"worker_id": worker_id})
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return row_to_job(row)
+
+
+def claim_job_by_prefix(
+    *,
+    worker_id: str,
+    prefix: str,
+    database_url: str | None = None,
+) -> QueueJob | None:
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            query_text(CLAIM_PREFIX_JOB_SQL),
+            {
+                "prefix": prefix + "%",
+                "worker_id": worker_id,
+            },
+        )
         row = cursor.fetchone()
 
     if row is None:
@@ -438,6 +593,29 @@ def load_job_statuses(database_url: str | None = None) -> tuple[QueueJobStatus, 
     )
 
 
+def load_job_statuses_by_prefix(
+    *,
+    prefix: str,
+    database_url: str | None = None,
+) -> tuple[QueueJobStatus, ...]:
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(query_text(JOB_STATUS_BY_PREFIX_SQL), {"prefix": prefix + "%"})
+        rows = cursor.fetchall()
+
+    return tuple(
+        QueueJobStatus(
+            job_kind=str(row[0]),
+            idempotency_key=str(row[1]),
+            status=str(row[2]),
+            attempts=int(row[3]),
+            max_attempts=int(row[4]),
+            locked_by=None if row[5] is None else str(row[5]),
+            last_error=None if row[6] is None else str(row[6]),
+        )
+        for row in rows
+    )
+
+
 def count_benchmark_jobs_by_status(
     *,
     run_key: str,
@@ -458,6 +636,126 @@ def count_benchmark_jobs_by_status(
         raise RuntimeError("Benchmark status count returned no row.")
 
     return int(row[0])
+
+
+def payload_string(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Expected non-empty string payload field {key!r}.")
+    return value
+
+
+def payload_int(payload: dict[str, Any], key: str) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Expected integer payload field {key!r}.")
+    return value
+
+
+def execute_queue_job(job: QueueJob, database_url: str | None = None) -> dict[str, object]:
+    if job.job_kind == "binance_klines":
+        result = fetch_and_store_binance_klines(
+            symbol=payload_string(job.payload, "symbol"),
+            interval=payload_string(job.payload, "interval"),
+            limit=payload_int(job.payload, "limit"),
+            database_url=database_url,
+        )
+        return {
+            "rows_fetched": result.rows_fetched,
+            "rows_upserted": result.rows_upserted,
+            "symbol": result.symbol,
+            "interval": result.interval,
+        }
+
+    if job.job_kind == "bnb_block_timestamp":
+        result = run_bnb_block_timestamp_smoke(
+            from_block=payload_int(job.payload, "from_block"),
+            to_block=payload_int(job.payload, "to_block"),
+            pair_address=payload_string(job.payload, "address"),
+            topic0=payload_string(job.payload, "topic0"),
+            database_url=database_url,
+        )
+        return {
+            "requested_blocks": len(result.requested_block_numbers),
+            "cached_blocks": len(result.cached_block_numbers),
+            "missing_blocks": len(result.missing_block_numbers),
+            "fetched_blocks": len(result.fetched_blocks),
+            "projected_swaps": result.swap_projection.projected_events,
+            "enriched_swaps": result.enriched_swaps,
+        }
+
+    raise ValueError(f"Unsupported queue job kind: {job.job_kind}")
+
+
+def run_claimed_job(
+    *,
+    job: QueueJob,
+    worker_id: str,
+    database_url: str | None = None,
+) -> QueueWorkerExecution:
+    try:
+        summary = execute_queue_job(job, database_url=database_url)
+        complete_job(job_id=job.job_id, database_url=database_url)
+        final_status = "completed"
+    except Exception as error:
+        final_status = fail_job(
+            job_id=job.job_id,
+            error=f"{type(error).__name__}: {error}",
+            database_url=database_url,
+        )
+        summary = {
+            "error_type": type(error).__name__,
+            "error": str(error),
+        }
+
+    return QueueWorkerExecution(
+        worker_id=worker_id,
+        job_kind=job.job_kind,
+        idempotency_key=job.idempotency_key,
+        final_status=final_status,
+        attempts=job.attempts,
+        summary=summary,
+    )
+
+
+def run_queue_worker_smoke(
+    *,
+    run_key: str = "default",
+    worker_id: str = "worker-exec-1",
+    binance_limit: int = 5,
+    database_url: str | None = None,
+) -> QueueWorkerSmokeResult:
+    seeded_jobs = seed_queue_worker_jobs(
+        run_key=run_key,
+        binance_limit=binance_limit,
+        database_url=database_url,
+    )
+    prefix = worker_prefix(run_key)
+    executions: list[QueueWorkerExecution] = []
+
+    while len(executions) < seeded_jobs * 2:
+        job = claim_job_by_prefix(
+            worker_id=worker_id,
+            prefix=prefix,
+            database_url=database_url,
+        )
+        if job is None:
+            break
+        executions.append(
+            run_claimed_job(
+                job=job,
+                worker_id=worker_id,
+                database_url=database_url,
+            )
+        )
+
+    return QueueWorkerSmokeResult(
+        run_key=run_key,
+        worker_id=worker_id,
+        seeded_jobs=seeded_jobs,
+        executions=tuple(executions),
+        statuses=load_job_statuses_by_prefix(prefix=prefix, database_url=database_url),
+    )
 
 
 def run_queue_smoke(database_url: str | None = None) -> QueueSmokeResult:

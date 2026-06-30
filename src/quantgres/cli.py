@@ -65,8 +65,10 @@ from quantgres.experiments.olap_return_panel import (
 from quantgres.experiments.queue_jobs import (
     QueueBenchmarkResult,
     QueueSmokeResult,
+    QueueWorkerSmokeResult,
     run_queue_benchmark_smoke,
     run_queue_smoke,
+    run_queue_worker_smoke,
 )
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_paper_trace import (
@@ -279,6 +281,14 @@ def build_parser() -> ArgumentParser:
     queue_benchmark.add_argument("--jobs", type=int, default=12)
     queue_benchmark.add_argument("--workers", type=int, default=4)
     queue_benchmark.add_argument("--run-key", default="default")
+
+    queue_worker = subparsers.add_parser(
+        "queue-worker-smoke",
+        help="Claim QueueDB jobs and execute real ingestion payloads.",
+    )
+    queue_worker.add_argument("--run-key", default="default")
+    queue_worker.add_argument("--worker-id", default="worker-exec-1")
+    queue_worker.add_argument("--binance-limit", type=int, default=5)
 
     return parser
 
@@ -1209,6 +1219,56 @@ def run_queue_benchmark(args: Namespace) -> int:
     return 0
 
 
+def format_queue_worker_smoke(result: QueueWorkerSmokeResult) -> list[str]:
+    lines = [
+        "QueueDB Worker Smoke",
+        f"Run key: {result.run_key}",
+        f"Worker: {result.worker_id}",
+        f"Seeded jobs: {result.seeded_jobs}",
+        f"Executions: {len(result.executions)}",
+        "Executed jobs:",
+    ]
+    lines.extend(
+        (
+            f"- {execution.job_kind} "
+            f"status={execution.final_status} "
+            f"attempts={execution.attempts} "
+            f"idempotency_key={execution.idempotency_key} "
+            f"summary={execution.summary}"
+        )
+        for execution in result.executions
+    )
+    lines.append("Final statuses:")
+    lines.extend(
+        (
+            f"- {status.job_kind} "
+            f"status={status.status} "
+            f"attempts={status.attempts}/{status.max_attempts} "
+            f"idempotency_key={status.idempotency_key} "
+            f"last_error={status.last_error}"
+        )
+        for status in result.statuses
+    )
+    return lines
+
+
+def run_queue_worker(args: Namespace) -> int:
+    result = run_queue_worker_smoke(
+        run_key=args.run_key,
+        worker_id=args.worker_id,
+        binance_limit=args.binance_limit,
+    )
+    for line in format_queue_worker_smoke(result):
+        print(line)
+
+    if len(result.executions) != result.seeded_jobs:
+        return 1
+    if any(status.status != "completed" for status in result.statuses):
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1284,6 +1344,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "queue-benchmark-smoke":
         return run_queue_benchmark(args)
+
+    if args.command == "queue-worker-smoke":
+        return run_queue_worker(args)
 
     parser.print_help()
     return 0
