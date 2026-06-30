@@ -17,6 +17,7 @@ from quantgres.experiments.feature_store import (
     load_feature_source_rows,
 )
 from quantgres.experiments.olap_return_panel import run_olap_return_panel_smoke
+from quantgres.runtime import DatabaseRuntimeInfo, load_runtime_info
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FEATURE_STORE_SQL_DIR = PROJECT_ROOT / "sql" / "feature_store"
@@ -31,6 +32,11 @@ BATCH_CODE_FINGERPRINT_PATHS = (
     Path("sql/feature_store/001_quant_feature_snapshots.sql"),
     Path("sql/feature_store/002_quant_feature_batches.sql"),
     Path("sql/analytics/001_market_return_panel.sql"),
+)
+BATCH_DEPENDENCY_FINGERPRINT_PATHS = (
+    Path("pyproject.toml"),
+    Path("uv.lock"),
+    Path(".python-version"),
 )
 
 INSERT_BATCH_SQL = """
@@ -147,6 +153,8 @@ class FeatureBatchSmokeResult:
     feature_set: str
     config_hash: str
     code_hash: str
+    dependency_hash: str
+    runtime_hash: str
     source_rows: int
     inserted_batch: int
     inserted_items: int
@@ -217,6 +225,53 @@ def build_code_fingerprint(
     }
 
 
+def build_dependency_fingerprint(
+    paths: Iterable[Path] = BATCH_DEPENDENCY_FINGERPRINT_PATHS,
+) -> dict[str, object]:
+    dependency_paths = tuple(
+        {
+            "path": display_path(path),
+            "sha256": file_sha256(PROJECT_ROOT / path if not path.is_absolute() else path),
+        }
+        for path in paths
+    )
+    return {
+        "dependency_hash": canonical_json_hash({"dependency_paths": list(dependency_paths)}),
+        "dependency_paths": list(dependency_paths),
+    }
+
+
+def runtime_material(info: DatabaseRuntimeInfo) -> dict[str, object]:
+    return {
+        "server_version": info.server_version,
+        "server_version_num": info.server_version_num,
+        "database_name": info.database_name,
+        "user_name": info.user_name,
+        "extensions": [
+            {"name": extension.name, "version": extension.version}
+            for extension in sorted(info.extensions, key=lambda extension: extension.name)
+        ],
+    }
+
+
+def runtime_hash_material(info: DatabaseRuntimeInfo) -> dict[str, object]:
+    return {
+        "server_version_num": info.server_version_num,
+        "extensions": [
+            {"name": extension.name, "version": extension.version}
+            for extension in sorted(info.extensions, key=lambda extension: extension.name)
+        ],
+    }
+
+
+def build_runtime_fingerprint(info: DatabaseRuntimeInfo) -> dict[str, object]:
+    material = runtime_material(info)
+    return {
+        "runtime": material,
+        "runtime_hash": canonical_json_hash(runtime_hash_material(info)),
+    }
+
+
 def build_batch_config(
     *,
     symbol: str,
@@ -238,6 +293,8 @@ def build_reproducibility_metadata(
     *,
     config: dict[str, object],
     code_fingerprint: dict[str, object],
+    dependency_fingerprint: dict[str, object],
+    runtime_fingerprint: dict[str, object],
 ) -> dict[str, object]:
     config_hash = canonical_json_hash(config)
     return {
@@ -245,6 +302,10 @@ def build_reproducibility_metadata(
         "config_hash": config_hash,
         "code_hash": str(code_fingerprint["code_hash"]),
         "code_paths": code_fingerprint["code_paths"],
+        "dependency_hash": str(dependency_fingerprint["dependency_hash"]),
+        "dependency_paths": dependency_fingerprint["dependency_paths"],
+        "runtime_hash": str(runtime_fingerprint["runtime_hash"]),
+        "runtime": runtime_fingerprint["runtime"],
     }
 
 
@@ -255,6 +316,8 @@ def build_batch_id(
     rows: tuple[FeatureSourceRow, ...],
     config_hash: str | None = None,
     code_hash: str | None = None,
+    dependency_hash: str | None = None,
+    runtime_hash: str | None = None,
 ) -> str:
     material: dict[str, object] = {
         "feature_set": feature_set,
@@ -265,6 +328,10 @@ def build_batch_id(
         material["config_hash"] = config_hash
     if code_hash is not None:
         material["code_hash"] = code_hash
+    if dependency_hash is not None:
+        material["dependency_hash"] = dependency_hash
+    if runtime_hash is not None:
+        material["runtime_hash"] = runtime_hash
 
     return canonical_json_hash(material)
 
@@ -503,15 +570,21 @@ def run_feature_batch_smoke(
     reproducibility_metadata = build_reproducibility_metadata(
         config=config,
         code_fingerprint=build_code_fingerprint(),
+        dependency_fingerprint=build_dependency_fingerprint(),
+        runtime_fingerprint=build_runtime_fingerprint(load_runtime_info(database_url)),
     )
     config_hash = str(reproducibility_metadata["config_hash"])
     code_hash = str(reproducibility_metadata["code_hash"])
+    dependency_hash = str(reproducibility_metadata["dependency_hash"])
+    runtime_hash = str(reproducibility_metadata["runtime_hash"])
     batch_id = build_batch_id(
         feature_set=feature_set,
         run_key=run_key,
         rows=rows,
         config_hash=config_hash,
         code_hash=code_hash,
+        dependency_hash=dependency_hash,
+        runtime_hash=runtime_hash,
     )
     inserted_batch = insert_batch(
         batch_id=batch_id,
@@ -534,6 +607,8 @@ def run_feature_batch_smoke(
         feature_set=feature_set,
         config_hash=config_hash,
         code_hash=code_hash,
+        dependency_hash=dependency_hash,
+        runtime_hash=runtime_hash,
         source_rows=len(rows),
         inserted_batch=inserted_batch,
         inserted_items=inserted_items,

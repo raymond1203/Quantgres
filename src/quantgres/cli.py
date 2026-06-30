@@ -1037,6 +1037,8 @@ def format_feature_batch_smoke(result: FeatureBatchSmokeResult) -> list[str]:
         f"Feature set: {result.feature_set}",
         f"Config hash: {result.config_hash}",
         f"Code hash: {result.code_hash}",
+        f"Dependency hash: {result.dependency_hash}",
+        f"Runtime hash: {result.runtime_hash}",
         f"Source rows: {result.source_rows}",
         f"Inserted batch: {result.inserted_batch}",
         f"Inserted items: {result.inserted_items}",
