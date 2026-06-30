@@ -50,7 +50,12 @@ from quantgres.experiments.olap_return_panel import (
     OlapReturnPanelSmokeResult,
     run_olap_return_panel_smoke,
 )
-from quantgres.experiments.queue_jobs import QueueSmokeResult, run_queue_smoke
+from quantgres.experiments.queue_jobs import (
+    QueueBenchmarkResult,
+    QueueSmokeResult,
+    run_queue_benchmark_smoke,
+    run_queue_smoke,
+)
 from quantgres.experiments.rdb_ledger_benchmark import run_rdb_ledger_cash_balance_benchmark
 from quantgres.experiments.rdb_paper_trace import (
     BinancePaperTraceSmokeResult,
@@ -233,6 +238,14 @@ def build_parser() -> ArgumentParser:
         "queue-smoke",
         help="Run a PostgreSQL SKIP LOCKED ingestion queue smoke test.",
     )
+
+    queue_benchmark = subparsers.add_parser(
+        "queue-benchmark-smoke",
+        help="Benchmark multi-worker SKIP LOCKED queue claims.",
+    )
+    queue_benchmark.add_argument("--jobs", type=int, default=12)
+    queue_benchmark.add_argument("--workers", type=int, default=4)
+    queue_benchmark.add_argument("--run-key", default="default")
 
     return parser
 
@@ -1006,6 +1019,50 @@ def run_queue_jobs() -> int:
     return 0
 
 
+def format_queue_benchmark(result: QueueBenchmarkResult) -> list[str]:
+    lines = [
+        "QueueDB Multi-Worker Benchmark",
+        f"Jobs seeded: {result.job_count}",
+        f"Workers: {result.worker_count}",
+        f"Claimed jobs: {result.claimed_count}",
+        f"Unique claimed jobs: {result.unique_claimed_count}",
+        f"Duplicate claims: {result.duplicate_claim_count}",
+        f"Completed jobs: {result.completed_count}",
+        f"Elapsed ms: {result.elapsed_ms:.3f}",
+        "Claims:",
+    ]
+    lines.extend(
+        (
+            f"- worker={claim.worker_id} "
+            f"job_id={claim.job_id} "
+            f"priority={claim.priority} "
+            f"idempotency_key={claim.idempotency_key}"
+        )
+        for claim in result.claims
+    )
+    return lines
+
+
+def run_queue_benchmark(args: Namespace) -> int:
+    result = run_queue_benchmark_smoke(
+        job_count=args.jobs,
+        worker_count=args.workers,
+        run_key=args.run_key,
+    )
+    for line in format_queue_benchmark(result):
+        print(line)
+
+    expected_claims = min(result.job_count, result.worker_count)
+    if result.claimed_count != expected_claims:
+        return 1
+    if result.duplicate_claim_count != 0:
+        return 1
+    if result.completed_count < result.claimed_count:
+        return 1
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1072,6 +1129,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "queue-smoke":
         return run_queue_jobs()
+
+    if args.command == "queue-benchmark-smoke":
+        return run_queue_benchmark(args)
 
     parser.print_help()
     return 0
