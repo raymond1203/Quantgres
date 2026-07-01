@@ -1098,8 +1098,10 @@ def format_olap_return_panel_smoke(result: OlapReturnPanelSmokeResult) -> list[s
     lines = [
         "OLAP Return Panel Smoke",
         f"Binance rows fetched: {result.binance_ingestion.rows_fetched}",
-        f"Swap events projected: {result.swap_projection.projected_events}",
+        f"Swap corpus projected: {result.swap_corpus.projected_events}",
+        f"Swap corpus enriched: {result.swap_corpus.enriched_swaps}",
         f"Panel rows: {result.panel_rows}",
+        f"Swap-aligned rows: {len(result.swap_aligned_rows)}",
         "Latest rows:",
     ]
     lines.extend(
@@ -1111,6 +1113,16 @@ def format_olap_return_panel_smoke(result: OlapReturnPanelSmokeResult) -> list[s
             f"swap_count={row.swap_count}"
         )
         for row in result.latest_rows
+    )
+    lines.append("Swap-aligned sample rows:")
+    lines.extend(
+        (
+            f"- {row.symbol} ts={row.ts} "
+            f"close={row.close_price} "
+            f"return_bps={row.return_bps} "
+            f"swap_count={row.swap_count}"
+        )
+        for row in result.swap_aligned_rows
     )
     lines.append(
         f"Plan: root_node={result.plan.root_node_type} "
@@ -1131,6 +1143,8 @@ def run_olap_return_panel(args: Namespace) -> int:
         print(line)
 
     if result.panel_rows == 0 or not result.latest_rows:
+        return 1
+    if not result.swap_aligned_rows:
         return 1
 
     return 0

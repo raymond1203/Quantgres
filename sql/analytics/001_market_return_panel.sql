@@ -1,6 +1,8 @@
 CREATE SCHEMA IF NOT EXISTS analytics;
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS analytics.market_return_panel AS
+DROP MATERIALIZED VIEW IF EXISTS analytics.market_return_panel;
+
+CREATE MATERIALIZED VIEW analytics.market_return_panel AS
 WITH candle_returns AS (
     SELECT
         symbol,
@@ -45,9 +47,11 @@ rolling_panel AS (
         quote_volume
     FROM return_panel
 ),
-swap_summary AS (
+swap_minute_summary AS (
     SELECT
+        date_trunc('minute', block_timestamp) AS ts,
         count(*)::integer AS swap_count,
+        count(DISTINCT block_number)::integer AS swap_block_count,
         coalesce(sum(amount0_in), 0)::numeric(78,0) AS amount0_in_sum,
         coalesce(sum(amount1_in), 0)::numeric(78,0) AS amount1_in_sum,
         coalesce(sum(amount0_out), 0)::numeric(78,0) AS amount0_out_sum,
@@ -56,6 +60,8 @@ swap_summary AS (
     WHERE chain_id = 56
       AND dex = 'pancakeswap_v2'
       AND pair_address = '0x16b9a82891338f9ba80e2d6970fdda79d1eb0dae'
+      AND block_timestamp IS NOT NULL
+    GROUP BY date_trunc('minute', block_timestamp)
 )
 SELECT
     panel.symbol,
@@ -66,14 +72,16 @@ SELECT
     panel.rolling_5_return_bps,
     panel.volume,
     panel.quote_volume,
-    swaps.swap_count,
-    swaps.amount0_in_sum,
-    swaps.amount1_in_sum,
-    swaps.amount0_out_sum,
-    swaps.amount1_out_sum,
+    coalesce(swaps.swap_count, 0)::integer AS swap_count,
+    coalesce(swaps.swap_block_count, 0)::integer AS swap_block_count,
+    coalesce(swaps.amount0_in_sum, 0)::numeric(78,0) AS amount0_in_sum,
+    coalesce(swaps.amount1_in_sum, 0)::numeric(78,0) AS amount1_in_sum,
+    coalesce(swaps.amount0_out_sum, 0)::numeric(78,0) AS amount0_out_sum,
+    coalesce(swaps.amount1_out_sum, 0)::numeric(78,0) AS amount1_out_sum,
     now() AS refreshed_at
 FROM rolling_panel AS panel
-CROSS JOIN swap_summary AS swaps
+LEFT JOIN swap_minute_summary AS swaps
+  ON swaps.ts = panel.ts
 WITH NO DATA;
 
 CREATE UNIQUE INDEX IF NOT EXISTS market_return_panel_symbol_ts_idx
