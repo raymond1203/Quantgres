@@ -20,8 +20,9 @@ DEFAULT_FEATURE_SET = "market_return_v1"
 FEATURE_SOURCE = "analytics.market_return_panel"
 BINANCE_CANDLE_SOURCE = "binance_spot_klines"
 ASOF_INDEX_NAME = "quant_feature_snapshots_symbol_asof_idx"
+FEATURE_SOURCE_ORDER_BY_SQL = "ORDER BY (panel.swap_count > 0) DESC, panel.ts DESC"
 
-FEATURE_SOURCE_ROWS_SQL = """
+FEATURE_SOURCE_ROWS_SQL = f"""
 SELECT
     panel.symbol,
     panel.ts AS event_ts,
@@ -41,7 +42,7 @@ JOIN time_series.candles_1m AS candle
  AND candle.ts = panel.ts
 WHERE panel.symbol = %(symbol)s
   AND candle.source = %(candle_source)s
-ORDER BY panel.ts DESC
+{FEATURE_SOURCE_ORDER_BY_SQL}
 LIMIT %(limit)s
 """
 

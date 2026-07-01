@@ -49,7 +49,12 @@ The first feature set is `market_return_v1` and includes:
 - one-minute return in basis points
 - rolling five-candle return in basis points
 - base and quote volume
-- PancakeSwap sample swap count from the current DeFi projection
+- event-time aligned PancakeSwap swap count from the OLAP panel
+
+The smoke source query prioritizes rows where `swap_count > 0`, then orders by
+latest candle timestamp. This keeps the point-in-time mechanics visible while
+ensuring the local sample includes a real on-chain feature rather than only
+current market rows with zero observed swaps.
 
 Metadata stays in JSONB, but model-facing values are typed columns so query
 plans, constraints, and downstream casts remain visible.
