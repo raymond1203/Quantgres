@@ -1239,6 +1239,8 @@ def run_feature_store(args: Namespace) -> int:
 
     if result.upserted_snapshots == 0 or result.total_snapshots == 0:
         return 1
+    if result.as_of_feature.swap_count == 0:
+        return 1
     if ASOF_INDEX_NAME not in result.plan.index_names:
         return 1
 

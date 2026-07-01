@@ -2,6 +2,8 @@ from decimal import Decimal
 
 from quantgres.experiments.feature_store import (
     ASOF_INDEX_NAME,
+    FEATURE_SOURCE_ORDER_BY_SQL,
+    FEATURE_SOURCE_ROWS_SQL,
     FeatureSourceRow,
     feature_metadata,
     summarize_plan,
@@ -32,6 +34,11 @@ def test_feature_metadata_records_source_and_feature_set():
         "candle_source": "binance_spot_klines",
         "panel_refreshed_at": "2026-01-01T00:02:00Z",
     }
+
+
+def test_feature_source_query_prioritizes_swap_aligned_rows():
+    assert FEATURE_SOURCE_ORDER_BY_SQL == "ORDER BY (panel.swap_count > 0) DESC, panel.ts DESC"
+    assert FEATURE_SOURCE_ORDER_BY_SQL in FEATURE_SOURCE_ROWS_SQL
 
 
 def test_summarize_plan_extracts_asof_index_and_buffer_summary():
