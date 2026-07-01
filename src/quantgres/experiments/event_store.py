@@ -8,6 +8,11 @@ from typing import Any, cast
 from psycopg.types.json import Jsonb
 
 from quantgres.db import connect, query_text
+from quantgres.experiments.feature_batches import (
+    FeatureBatchItemRow,
+    FeatureBatchSmokeResult,
+    run_feature_batch_smoke,
+)
 from quantgres.experiments.olap_return_panel import (
     MarketReturnPanelRow,
     OlapReturnPanelSmokeResult,
@@ -199,26 +204,90 @@ def vector_result_payload(result: MemorySearchResult) -> dict[str, Any]:
     }
 
 
+def bnb_swap_corpus_payload(olap_result: OlapReturnPanelSmokeResult) -> dict[str, Any]:
+    corpus = olap_result.swap_corpus
+    ingestion = corpus.windowed_ingestion
+    return {
+        "pipeline": "bnb_swap_corpus",
+        "stage": "onchain_ingestion",
+        "chain_id": ingestion.chain_id,
+        "pair_address": ingestion.address,
+        "from_block": ingestion.from_block,
+        "to_block": ingestion.to_block,
+        "window_size": ingestion.window_size,
+        "windows": len(ingestion.windows),
+        "rows_fetched": ingestion.rows_fetched,
+        "rows_upserted": ingestion.rows_upserted,
+        "projected_swaps": corpus.projected_events,
+        "requested_blocks": len(corpus.requested_block_numbers),
+        "fetched_blocks": len(corpus.fetched_blocks),
+        "enriched_swaps": corpus.enriched_swaps,
+        "report_json": str(corpus.report.json_path),
+        "report_markdown": str(corpus.report.markdown_path),
+    }
+
+
+def feature_batch_item_payload(item: FeatureBatchItemRow) -> dict[str, Any]:
+    return {
+        "pipeline": "bnb_swap_corpus",
+        "stage": "feature_batch",
+        "batch_id": item.batch_id,
+        "symbol": item.symbol,
+        "event_ts": iso_occurred_at(item.event_ts),
+        "feature_ts": iso_occurred_at(item.feature_ts),
+        "close_price": str(item.close_price),
+        "return_bps": decimal_or_none(item.return_bps),
+        "rolling_5_return_bps": decimal_or_none(item.rolling_5_return_bps),
+        "swap_count": item.swap_count,
+    }
+
+
 def build_event_drafts(
     *,
     olap_result: OlapReturnPanelSmokeResult,
+    feature_batch_result: FeatureBatchSmokeResult,
     vector_result: VectorMemorySmokeResult,
 ) -> tuple[AgentEventDraft, ...]:
-    if not olap_result.latest_rows:
-        raise RuntimeError("Expected at least one OLAP panel row.")
+    if not olap_result.swap_aligned_rows:
+        raise RuntimeError("Expected at least one swap-aligned OLAP panel row.")
     if not vector_result.results:
         raise RuntimeError("Expected at least one vector memory result.")
+    if feature_batch_result.as_of_item.swap_count == 0:
+        raise RuntimeError("Expected feature batch event to include swap_count > 0.")
+    if not olap_result.swap_corpus.sample_events:
+        raise RuntimeError("Expected BNB swap corpus sample events.")
 
-    latest_panel = olap_result.latest_rows[0]
-    occurred_at = latest_panel.ts
+    aligned_panel = olap_result.swap_aligned_rows[0]
+    occurred_at = aligned_panel.ts
+    first_corpus_event = olap_result.swap_corpus.sample_events[0]
     return (
         AgentEventDraft(
-            event_type="olap_return_panel_observed",
+            event_type="bnb_swap_corpus_ingested",
+            subject_type="onchain_pair",
+            subject_id=str(olap_result.swap_corpus.windowed_ingestion.address),
+            occurred_at=first_corpus_event.block_timestamp,
+            source="quantgres.bnb_swap_corpus",
+            payload=bnb_swap_corpus_payload(olap_result),
+        ),
+        AgentEventDraft(
+            event_type="olap_swap_aligned_observed",
             subject_type="symbol",
-            subject_id=latest_panel.symbol,
+            subject_id=aligned_panel.symbol,
             occurred_at=occurred_at,
             source="quantgres.olap_return_panel",
-            payload=olap_event_payload(latest_panel),
+            payload={
+                "pipeline": "bnb_swap_corpus",
+                "stage": "olap_event_time_alignment",
+                **olap_event_payload(aligned_panel),
+            },
+        ),
+        AgentEventDraft(
+            event_type="feature_batch_item_observed",
+            subject_type="symbol",
+            subject_id=feature_batch_result.as_of_item.symbol,
+            occurred_at=feature_batch_result.as_of_item.feature_ts,
+            source="quantgres.feature_batches",
+            payload=feature_batch_item_payload(feature_batch_result.as_of_item),
         ),
         AgentEventDraft(
             event_type="vector_memory_retrieval_observed",
@@ -377,17 +446,22 @@ def run_event_store_smoke(
     database_url: str | None = None,
 ) -> EventStoreSmokeResult:
     olap_result = run_olap_return_panel_smoke(database_url=database_url)
+    feature_batch_result = run_feature_batch_smoke(source_limit=5, database_url=database_url)
     vector_result = run_vector_memory_smoke(query=query, database_url=database_url)
-    drafts = build_event_drafts(olap_result=olap_result, vector_result=vector_result)
+    drafts = build_event_drafts(
+        olap_result=olap_result,
+        feature_batch_result=feature_batch_result,
+        vector_result=vector_result,
+    )
     inserted, skipped = append_events(drafts, database_url)
 
     subject_events = load_subject_events(
         subject_type="symbol",
-        subject_id=olap_result.latest_rows[0].symbol,
+        subject_id=olap_result.swap_aligned_rows[0].symbol,
         limit=5,
         database_url=database_url,
     )
-    payload_filter = {"symbol": olap_result.latest_rows[0].symbol}
+    payload_filter = {"pipeline": "bnb_swap_corpus"}
     payload_match_count = count_payload_matches(
         payload_filter=payload_filter,
         database_url=database_url,
@@ -403,7 +477,7 @@ def run_event_store_smoke(
                 sql=EXPLAIN_SUBJECT_EVENTS_SQL,
                 params={
                     "subject_type": "symbol",
-                    "subject_id": olap_result.latest_rows[0].symbol,
+                    "subject_id": olap_result.swap_aligned_rows[0].symbol,
                     "limit": 5,
                 },
                 database_url=database_url,
