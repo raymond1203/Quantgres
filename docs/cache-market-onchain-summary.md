@@ -12,8 +12,10 @@ quant/agent summary queries?
 
 The smoke refreshes real upstream data first:
 
-- Binance public klines in `time_series.candles_1m`
-- BNB Chain PancakeSwap V2 Swap projection in `defi.swap_events`
+- Binance public klines in `time_series.candles_1m`, fetched around the BNB
+  corpus sample event-time window
+- Windowed BNB Chain PancakeSwap V2 Swap corpus in `defi.swap_events`
+- BNB block timestamp enrichment for event-time on-chain summaries
 
 It then refreshes:
 
@@ -33,6 +35,11 @@ Each row stores:
 - `latest_observed_at`
 - `metrics` JSONB
 - `refreshed_at`
+
+The on-chain summary only counts enriched swaps where
+`defi.swap_events.block_timestamp IS NOT NULL`. Its `latest_observed_at` is the
+latest block timestamp, not the local projection timestamp, so downstream agent
+context can distinguish event time from ingestion time.
 
 ## Tradeoff
 
@@ -56,7 +63,7 @@ uv run quantgres cache-summary-smoke
 
 Expected behavior:
 
-- Refreshes real Binance and BNB data.
+- Refreshes real Binance and windowed BNB swap corpus data.
 - Refreshes `cache.market_onchain_summary`.
 - Prints the selected summary row.
 - Prints base aggregate and cache lookup plan summaries.

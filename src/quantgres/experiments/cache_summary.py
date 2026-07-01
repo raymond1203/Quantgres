@@ -8,12 +8,15 @@ from quantgres.experiments.binance_candles import (
     BinanceCandleIngestionResult,
     fetch_and_store_binance_klines,
 )
+from quantgres.experiments.bnb_swap_corpus import (
+    BnbSwapCorpusSmokeResult,
+    run_bnb_swap_corpus_smoke,
+)
 from quantgres.experiments.bnb_swap_projection import (
     PANCAKESWAP_V2,
     PANCAKESWAP_V2_WBNB_USDT_PAIR,
-    BnbSwapProjectionSmokeResult,
-    run_bnb_swap_projection_smoke,
 )
+from quantgres.experiments.olap_return_panel import build_binance_kline_window_ms
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CACHE_SQL_DIR = PROJECT_ROOT / "sql" / "cache"
@@ -47,15 +50,18 @@ onchain_summary AS (
     SELECT
         concat('onchain:', dex, ':bnb-usdt') AS summary_key,
         'onchain' AS summary_kind,
-        max(projected_at) AS latest_observed_at,
+        max(block_timestamp) AS latest_observed_at,
         jsonb_build_object(
             'chain_id', chain_id,
             'dex', dex,
             'pair_address', pair_address,
             'swap_count', count(*),
+            'enriched_swap_count', count(*),
             'block_count', count(DISTINCT block_number),
             'first_block', min(block_number),
             'last_block', max(block_number),
+            'first_block_timestamp', min(block_timestamp),
+            'last_block_timestamp', max(block_timestamp),
             'amount0_in_sum', sum(amount0_in)::text,
             'amount1_in_sum', sum(amount1_in)::text,
             'amount0_out_sum', sum(amount0_out)::text,
@@ -65,6 +71,7 @@ onchain_summary AS (
     WHERE chain_id = 56
       AND dex = %(dex)s
       AND pair_address = %(pair_address)s
+      AND block_timestamp IS NOT NULL
     GROUP BY chain_id, dex, pair_address
 ),
 combined AS (
@@ -144,7 +151,7 @@ class CachePlanSummary:
 @dataclass(frozen=True)
 class CacheSummarySmokeResult:
     binance_ingestion: BinanceCandleIngestionResult
-    swap_projection: BnbSwapProjectionSmokeResult
+    swap_corpus: BnbSwapCorpusSmokeResult
     refreshed_rows: int
     selected_summary: CacheSummaryRow
     base_plan: CachePlanSummary
@@ -166,6 +173,15 @@ def refresh_market_onchain_summary(database_url: str | None = None) -> int:
         connection.execute(query_text(REFRESH_MARKET_ONCHAIN_SUMMARY_SQL))
 
     return count_cache_summaries(database_url)
+
+
+def require_enriched_swap_corpus(swap_corpus: BnbSwapCorpusSmokeResult) -> None:
+    if (
+        swap_corpus.projected_events == 0
+        or swap_corpus.enriched_swaps == 0
+        or not swap_corpus.sample_events
+    ):
+        raise RuntimeError("Cache summary requires a non-empty enriched BNB swap corpus.")
 
 
 def count_cache_summaries(database_url: str | None = None) -> int:
@@ -296,20 +312,26 @@ def run_cache_summary_smoke(
     summary_key: str = DEFAULT_ONCHAIN_SUMMARY_KEY,
     database_url: str | None = None,
 ) -> CacheSummarySmokeResult:
+    swap_corpus = run_bnb_swap_corpus_smoke(database_url=database_url)
+    require_enriched_swap_corpus(swap_corpus)
+    start_time_ms, end_time_ms = build_binance_kline_window_ms(
+        tuple(event.block_timestamp for event in swap_corpus.sample_events)
+    )
     binance_ingestion = fetch_and_store_binance_klines(
         symbol=symbol,
         interval="1m",
         limit=binance_limit,
+        start_time_ms=start_time_ms,
+        end_time_ms=end_time_ms,
         database_url=database_url,
     )
-    swap_projection = run_bnb_swap_projection_smoke(database_url=database_url)
     refreshed_rows = refresh_market_onchain_summary(database_url)
     selected_summary = lookup_cache_summary(summary_key=summary_key, database_url=database_url)
     params = plan_params(summary_key)
 
     return CacheSummarySmokeResult(
         binance_ingestion=binance_ingestion,
-        swap_projection=swap_projection,
+        swap_corpus=swap_corpus,
         refreshed_rows=refreshed_rows,
         selected_summary=selected_summary,
         base_plan=summarize_plan(
