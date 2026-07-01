@@ -228,7 +228,7 @@ def build_parser() -> ArgumentParser:
         "search-document-smoke",
         help="Project JSONB documents into a full-text/trigram search table and query them.",
     )
-    search_smoke.add_argument("--query", default="pancakeswap swap")
+    search_smoke.add_argument("--query", default="pancakeswap swap corpus")
     search_smoke.add_argument("--fuzzy", default="0x16b9a82891338f9b")
     search_smoke.add_argument("--limit", type=int, default=5)
 
@@ -239,7 +239,7 @@ def build_parser() -> ArgumentParser:
     search_benchmark.add_argument("--symbols", default="BTCUSDT,ETHUSDT,BNBUSDT")
     search_benchmark.add_argument("--binance-limit", type=int, default=500)
     search_benchmark.add_argument("--bnb-log-limit", type=int, default=25)
-    search_benchmark.add_argument("--query", default="binance kline market candle")
+    search_benchmark.add_argument("--query", default="pancakeswap swap corpus")
     search_benchmark.add_argument("--fuzzy", default="0x16b9a82891338f9b")
     search_benchmark.add_argument("--limit", type=int, default=5)
 
@@ -247,7 +247,7 @@ def build_parser() -> ArgumentParser:
         "vector-memory-smoke",
         help="Project real search documents into pgvector memory and run similarity search.",
     )
-    vector_memory.add_argument("--query", default="pancakeswap swap bnb chain")
+    vector_memory.add_argument("--query", default="pancakeswap swap bnb chain corpus")
     vector_memory.add_argument("--source-limit", type=int, default=1000)
     vector_memory.add_argument("--limit", type=int, default=5)
 
@@ -255,7 +255,7 @@ def build_parser() -> ArgumentParser:
         "embedding-comparison-smoke",
         help="Compare deterministic pgvector memory with real fastembed model retrieval.",
     )
-    embedding_comparison.add_argument("--query", default="pancakeswap swap bnb chain")
+    embedding_comparison.add_argument("--query", default="pancakeswap swap bnb chain corpus")
     embedding_comparison.add_argument("--model-name", default=DEFAULT_FASTEMBED_MODEL)
     embedding_comparison.add_argument("--source-limit", type=int, default=100)
     embedding_comparison.add_argument("--limit", type=int, default=5)
@@ -264,7 +264,7 @@ def build_parser() -> ArgumentParser:
         "vector-retrieval-benchmark",
         help="Generate a VectorDB retrieval comparison benchmark report.",
     )
-    vector_retrieval_benchmark.add_argument("--query", default="pancakeswap swap bnb chain")
+    vector_retrieval_benchmark.add_argument("--query", default="pancakeswap swap bnb chain corpus")
     vector_retrieval_benchmark.add_argument("--model-name", default=DEFAULT_FASTEMBED_MODEL)
     vector_retrieval_benchmark.add_argument("--source-limit", type=int, default=100)
     vector_retrieval_benchmark.add_argument("--limit", type=int, default=5)
@@ -289,7 +289,7 @@ def build_parser() -> ArgumentParser:
         "event-store-smoke",
         help="Append real OLAP and vector retrieval results into an audit event store.",
     )
-    event_store.add_argument("--query", default="pancakeswap swap bnb chain")
+    event_store.add_argument("--query", default="pancakeswap swap bnb chain corpus")
 
     feature_store = subparsers.add_parser(
         "feature-store-smoke",
@@ -315,7 +315,7 @@ def build_parser() -> ArgumentParser:
         "hybrid-retrieval-smoke",
         help="Combine SearchDB and VectorDB candidates into a hybrid ranked result.",
     )
-    hybrid_retrieval.add_argument("--query", default="pancakeswap swap bnb chain")
+    hybrid_retrieval.add_argument("--query", default="pancakeswap swap bnb chain corpus")
     hybrid_retrieval.add_argument("--fuzzy", default="0x16b9a82891338f9b")
     hybrid_retrieval.add_argument("--source-limit", type=int, default=1000)
     hybrid_retrieval.add_argument("--candidate-limit", type=int, default=100)
@@ -764,7 +764,7 @@ def format_jsonb_document_smoke(result: JsonbDocumentSmokeResult) -> list[str]:
     lines = [
         "JSONB Document Store Smoke",
         f"Binance documents upserted: {result.binance_documents_upserted}",
-        f"BNB documents upserted: {result.bnb_documents_upserted}",
+        f"BNB corpus documents upserted: {result.bnb_documents_upserted}",
         "Source counts:",
     ]
     lines.extend(f"- {source}: {count}" for source, count in result.source_counts)
@@ -894,7 +894,7 @@ def format_search_document_benchmark(result: SearchDocumentBenchmarkResult) -> l
         f"Binance limit: {result.binance_limit}",
         f"Binance rows fetched: {sum(item.rows_fetched for item in result.binance_ingestions)}",
         f"Binance documents upserted: {result.binance_documents_upserted}",
-        f"BNB documents upserted: {result.bnb_documents_upserted}",
+        f"BNB corpus documents upserted: {result.bnb_documents_upserted}",
         f"Projected documents: {result.projected_documents}",
         f"Source counts: {dict(result.source_counts)}",
         f"Full-text results: {len(result.full_text_results)}",

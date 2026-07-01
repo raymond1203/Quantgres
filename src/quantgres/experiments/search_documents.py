@@ -11,16 +11,15 @@ from quantgres.experiments.binance_candles import (
     BinanceCandleIngestionResult,
     fetch_and_store_binance_klines,
 )
-from quantgres.experiments.bnb_raw_logs import fetch_and_store_bnb_logs
+from quantgres.experiments.bnb_swap_corpus import run_bnb_swap_corpus_smoke
 from quantgres.experiments.jsonb_documents import (
-    PANCAKESWAP_SAMPLE_BLOCK,
-    PANCAKESWAP_V2_SWAP_TOPIC0,
     PANCAKESWAP_V2_WBNB_USDT_PAIR,
     ensure_document_schema,
     run_jsonb_document_smoke,
     upsert_binance_documents,
-    upsert_bnb_log_documents,
+    upsert_bnb_swap_corpus_documents,
 )
+from quantgres.experiments.olap_return_panel import build_binance_kline_window_ms
 from quantgres.reports import WrittenReport, default_generated_reports_dir
 from quantgres.runtime import DatabaseRuntimeInfo, load_runtime_info
 
@@ -35,7 +34,7 @@ UPSERT_SEARCH_DOCUMENTS_SQL = """
 WITH source_documents AS (
     SELECT *
     FROM documents.raw_payloads
-    WHERE source IN ('binance_kline', 'bnb_rpc_log')
+    WHERE source IN ('binance_kline', 'bnb_rpc_log', 'bnb_swap_corpus')
 ),
 projected AS (
     SELECT
@@ -47,6 +46,8 @@ projected AS (
                 THEN concat(payload ->> 'symbol', ' Binance 1m kline')
             WHEN source = 'bnb_rpc_log'
                 THEN concat('BNB Chain PancakeSwap swap log ', payload ->> 'transactionHash')
+            WHEN source = 'bnb_swap_corpus'
+                THEN concat('BNB Chain PancakeSwap swap corpus ', payload ->> 'transaction_hash')
             ELSE concat(source, ' ', external_id)
         END AS title,
         CASE
@@ -66,16 +67,35 @@ projected AS (
                 payload ->> 'transactionHash',
                 payload -> 'topics' ->> 0
             )
+            WHEN source = 'bnb_swap_corpus' THEN concat_ws(
+                ' ',
+                'bnb chain pancakeswap swap corpus enriched event time',
+                payload ->> 'dex',
+                payload ->> 'pair_address',
+                payload ->> 'transaction_hash',
+                'block', payload ->> 'block_number',
+                'timestamp', payload ->> 'block_timestamp',
+                'amount0_in', payload ->> 'amount0_in',
+                'amount1_in', payload ->> 'amount1_in',
+                'amount0_out', payload ->> 'amount0_out',
+                'amount1_out', payload ->> 'amount1_out'
+            )
             ELSE payload::text
         END AS document_text,
         CASE
             WHEN source = 'binance_kline' THEN coalesce(payload ->> 'symbol', external_id)
             WHEN source = 'bnb_rpc_log' THEN coalesce(payload ->> 'address', external_id)
+            WHEN source = 'bnb_swap_corpus' THEN coalesce(payload ->> 'pair_address', external_id)
             ELSE external_id
         END AS fuzzy_key,
         jsonb_build_object(
             'source', source,
-            'external_id', external_id
+            'external_id', external_id,
+            'pipeline',
+                CASE
+                    WHEN source = 'bnb_swap_corpus' THEN 'bnb_swap_corpus'
+                    ELSE source
+                END
         ) AS metadata
     FROM source_documents
 )
@@ -113,7 +133,8 @@ SELECT
     title,
     ts_rank(search_vector, websearch_to_tsquery('english', %s)) AS rank
 FROM search.search_documents
-WHERE search_vector @@ websearch_to_tsquery('english', %s)
+WHERE source IN ('binance_kline', 'bnb_swap_corpus')
+  AND search_vector @@ websearch_to_tsquery('english', %s)
 ORDER BY rank DESC, observed_at DESC
 LIMIT %s
 """
@@ -130,7 +151,8 @@ SELECT
     fuzzy_key,
     similarity(fuzzy_key, %s) AS similarity_score
 FROM search.search_documents
-WHERE fuzzy_key %% %s
+WHERE source IN ('binance_kline', 'bnb_swap_corpus')
+  AND fuzzy_key %% %s
 ORDER BY similarity_score DESC, observed_at DESC
 LIMIT %s
 """
@@ -138,6 +160,7 @@ LIMIT %s
 COUNT_SEARCH_DOCUMENTS_BY_SOURCE_SQL = """
 SELECT source, count(*)::integer
 FROM search.search_documents
+WHERE source IN ('binance_kline', 'bnb_swap_corpus')
 GROUP BY source
 ORDER BY source
 """
@@ -358,6 +381,13 @@ def refresh_search_benchmark_corpus(
         raise ValueError("bnb_log_limit must be positive.")
 
     ensure_document_schema(database_url)
+    swap_corpus = run_bnb_swap_corpus_smoke(
+        result_limit=max(bnb_log_limit, 10),
+        database_url=database_url,
+    )
+    start_time_ms, end_time_ms = build_binance_kline_window_ms(
+        tuple(event.block_timestamp for event in swap_corpus.sample_events)
+    )
     binance_ingestions: list[BinanceCandleIngestionResult] = []
     binance_documents_upserted = 0
     for symbol in normalized_symbols:
@@ -365,6 +395,8 @@ def refresh_search_benchmark_corpus(
             symbol=symbol,
             interval="1m",
             limit=binance_limit,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
             database_url=database_url,
         )
         binance_ingestions.append(ingestion)
@@ -374,14 +406,7 @@ def refresh_search_benchmark_corpus(
             database_url=database_url,
         )
 
-    fetch_and_store_bnb_logs(
-        from_block=PANCAKESWAP_SAMPLE_BLOCK,
-        to_block=PANCAKESWAP_SAMPLE_BLOCK,
-        address=PANCAKESWAP_V2_WBNB_USDT_PAIR,
-        topic0=PANCAKESWAP_V2_SWAP_TOPIC0,
-        database_url=database_url,
-    )
-    bnb_documents_upserted = upsert_bnb_log_documents(
+    bnb_documents_upserted = upsert_bnb_swap_corpus_documents(
         limit=bnb_log_limit,
         database_url=database_url,
     )
@@ -464,7 +489,7 @@ def build_search_benchmark_report(
         "parameters": {
             "symbols": list(symbols),
             "binance_limit": binance_limit,
-            "bnb_log_limit": bnb_log_limit,
+            "bnb_document_limit": bnb_log_limit,
             "full_text_query": full_text_query,
             "fuzzy_query": fuzzy_query,
             "result_limit": result_limit,
@@ -494,8 +519,8 @@ def build_search_benchmark_report(
         "postgresql": runtime_to_dict(runtime),
         "interpretation": (
             "This benchmark grows the SearchDB corpus with real Binance public "
-            "klines across multiple symbols and keeps the BNB PancakeSwap log "
-            "projection in the same table. EXPLAIN runs set enable_seqscan=off "
+            "klines across multiple symbols and keeps the enriched BNB PancakeSwap "
+            "swap corpus projection in the same table. EXPLAIN runs set enable_seqscan=off "
             "to capture index-probe evidence for the GIN full-text and trigram "
             "indexes; absolute timings on a local corpus should not be treated "
             "as production latency claims."
@@ -518,6 +543,7 @@ def build_search_benchmark_markdown(report: dict[str, Any]) -> str:
         f"- Track: `{report['track']}`",
         f"- Symbols: `{', '.join(parameters['symbols'])}`",
         f"- Binance limit: `{parameters['binance_limit']}`",
+        f"- BNB corpus document limit: `{parameters['bnb_document_limit']}`",
         f"- PostgreSQL: `{report['postgresql']['server_version']}`",
         "",
         "## Dataset",
@@ -639,7 +665,7 @@ def run_search_document_benchmark(
     symbols: Sequence[str] = DEFAULT_BENCHMARK_SYMBOLS,
     binance_limit: int = 500,
     bnb_log_limit: int = 25,
-    full_text_query: str = "binance kline market candle",
+    full_text_query: str = "pancakeswap swap corpus",
     fuzzy_query: str = PANCAKESWAP_V2_WBNB_USDT_PAIR[:18],
     result_limit: int = 5,
     output_dir: Path | None = None,
@@ -722,7 +748,7 @@ def run_search_document_benchmark(
 
 def run_search_document_smoke(
     *,
-    full_text_query: str = "pancakeswap swap",
+    full_text_query: str = "pancakeswap swap corpus",
     fuzzy_query: str = "0x16b9a82891338f9b",
     limit: int = 5,
     database_url: str | None = None,

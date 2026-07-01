@@ -72,6 +72,7 @@ SELECT
     1 - (embedding <=> %(query_embedding)s::vector) AS cosine_similarity
 FROM memory.agent_memory_model_chunks
 WHERE embedding_model = %(embedding_model)s
+  AND source IN ('binance_kline', 'bnb_swap_corpus')
 ORDER BY embedding <=> %(query_embedding)s::vector
 LIMIT %(limit)s
 """
@@ -546,7 +547,7 @@ def write_vector_retrieval_report(report: dict[str, Any], output_dir: Path) -> W
 
 def run_vector_retrieval_benchmark(
     *,
-    query: str = "pancakeswap swap bnb chain",
+    query: str = "pancakeswap swap bnb chain corpus",
     model_name: str = DEFAULT_FASTEMBED_MODEL,
     source_limit: int = 100,
     result_limit: int = 5,
@@ -573,7 +574,7 @@ def run_vector_retrieval_benchmark(
 
 def run_embedding_comparison_smoke(
     *,
-    query: str = "pancakeswap swap bnb chain",
+    query: str = "pancakeswap swap bnb chain corpus",
     model_name: str = DEFAULT_FASTEMBED_MODEL,
     source_limit: int = 100,
     result_limit: int = 5,
