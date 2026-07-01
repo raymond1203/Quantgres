@@ -1,6 +1,8 @@
 from decimal import Decimal
 
 from quantgres.cli import main
+from quantgres.experiments.bnb_raw_logs import BnbLogWindowResult, BnbWindowedLogIngestionResult
+from quantgres.experiments.bnb_swap_corpus import BnbSwapCorpusSmokeResult
 from quantgres.experiments.embedding_comparison import (
     FASTEMBED_MODEL_DIMENSIONS,
     MODEL_VECTOR_INDEX_NAME,
@@ -288,6 +290,53 @@ def test_vector_retrieval_benchmark_prints_report_paths(monkeypatch, capsys, tmp
     assert exit_code == 0
     assert "JSON report:" in output
     assert "Markdown report:" in output
+
+
+def test_bnb_swap_corpus_smoke_prints_windowed_summary(monkeypatch, capsys, tmp_path):
+    result = BnbSwapCorpusSmokeResult(
+        windowed_ingestion=BnbWindowedLogIngestionResult(
+            rpc_url="https://example.invalid",
+            chain_id=56,
+            from_block=100,
+            to_block=109,
+            address="0xpair",
+            topic0="0xtopic",
+            window_size=10,
+            windows=(
+                BnbLogWindowResult(
+                    from_block=100,
+                    to_block=109,
+                    rows_fetched=2,
+                    rows_upserted=2,
+                ),
+            ),
+        ),
+        projected_events=2,
+        requested_block_numbers=(100, 101),
+        cached_block_numbers=(100,),
+        missing_block_numbers=(101,),
+        fetched_blocks=(),
+        upserted_blocks=1,
+        updated_swaps=2,
+        enriched_swaps=2,
+        sample_events=(),
+        report=WrittenReport(
+            json_path=tmp_path / "bnb-swap-corpus.json",
+            markdown_path=tmp_path / "bnb-swap-corpus.md",
+        ),
+    )
+    monkeypatch.setattr("quantgres.cli.run_bnb_swap_corpus_smoke", lambda **_: result)
+
+    exit_code = main(["bnb-swap-corpus-smoke", "--from-block", "100", "--to-block", "109"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "BNB Swap Corpus Smoke" in output
+    assert "Window size: 10" in output
+    assert "Rows fetched: 2" in output
+    assert "Projected swaps: 2" in output
+    assert "JSON report:" in output
 
 
 def test_queue_stale_lock_smoke_prints_recovery_summary(monkeypatch, capsys):

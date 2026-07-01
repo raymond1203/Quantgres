@@ -74,6 +74,40 @@ class BnbLogIngestionResult:
     rows_upserted: int
 
 
+@dataclass(frozen=True)
+class BlockWindow:
+    from_block: int
+    to_block: int
+
+
+@dataclass(frozen=True)
+class BnbLogWindowResult:
+    from_block: int
+    to_block: int
+    rows_fetched: int
+    rows_upserted: int
+
+
+@dataclass(frozen=True)
+class BnbWindowedLogIngestionResult:
+    rpc_url: str
+    chain_id: int
+    from_block: int
+    to_block: int
+    address: str | None
+    topic0: str | None
+    window_size: int
+    windows: tuple[BnbLogWindowResult, ...]
+
+    @property
+    def rows_fetched(self) -> int:
+        return sum(window.rows_fetched for window in self.windows)
+
+    @property
+    def rows_upserted(self) -> int:
+        return sum(window.rows_upserted for window in self.windows)
+
+
 def read_sql(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -118,6 +152,27 @@ def upsert_raw_logs(
     return len(logs)
 
 
+def build_block_windows(
+    *,
+    from_block: int,
+    to_block: int,
+    window_size: int,
+) -> tuple[BlockWindow, ...]:
+    if to_block < from_block:
+        raise ValueError("to_block must be greater than or equal to from_block.")
+    if window_size <= 0:
+        raise ValueError("window_size must be positive.")
+
+    windows: list[BlockWindow] = []
+    window_start = from_block
+    while window_start <= to_block:
+        window_end = min(window_start + window_size - 1, to_block)
+        windows.append(BlockWindow(from_block=window_start, to_block=window_end))
+        window_start = window_end + 1
+
+    return tuple(windows)
+
+
 def fetch_and_store_bnb_logs(
     *,
     from_block: int,
@@ -150,4 +205,54 @@ def fetch_and_store_bnb_logs(
         topic0=topic0,
         rows_fetched=len(logs),
         rows_upserted=rows_upserted,
+    )
+
+
+def fetch_and_store_bnb_logs_windowed(
+    *,
+    from_block: int,
+    to_block: int,
+    window_size: int,
+    address: str | None = None,
+    topic0: str | None = None,
+    rpc_url: str = DEFAULT_BNB_RPC_URL,
+    database_url: str | None = None,
+) -> BnbWindowedLogIngestionResult:
+    info = load_bnb_rpc_info(rpc_url=rpc_url)
+    if info.chain_id != BNB_CHAIN_ID:
+        raise RuntimeError(f"Expected BNB Chain id {BNB_CHAIN_ID}, got {info.chain_id}.")
+
+    window_results: list[BnbLogWindowResult] = []
+    for window in build_block_windows(
+        from_block=from_block,
+        to_block=to_block,
+        window_size=window_size,
+    ):
+        logs = get_logs(
+            rpc_url=rpc_url,
+            chain_id=info.chain_id,
+            from_block=window.from_block,
+            to_block=window.to_block,
+            address=address,
+            topic0=topic0,
+        )
+        rows_upserted = upsert_raw_logs(logs, database_url)
+        window_results.append(
+            BnbLogWindowResult(
+                from_block=window.from_block,
+                to_block=window.to_block,
+                rows_fetched=len(logs),
+                rows_upserted=rows_upserted,
+            )
+        )
+
+    return BnbWindowedLogIngestionResult(
+        rpc_url=rpc_url,
+        chain_id=info.chain_id,
+        from_block=from_block,
+        to_block=to_block,
+        address=address,
+        topic0=topic0,
+        window_size=window_size,
+        windows=tuple(window_results),
     )

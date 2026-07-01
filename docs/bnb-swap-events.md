@@ -71,5 +71,19 @@ Expected behavior:
 - Decodes Swap topics/data into `defi.swap_events`.
 - Prints sample sender, recipient, and amount columns.
 
+Run the wider corpus smoke:
+
+```powershell
+uv run quantgres bnb-swap-corpus-smoke
+```
+
+Expected behavior:
+
+- Calls real BNB Chain JSON-RPC through windowed raw log ingestion.
+- Projects every fetched PancakeSwap Swap log into `defi.swap_events`.
+- Fetches missing block headers and enriches swaps with block timestamps.
+- Writes `reports/generated/onchain/bnb-swap-corpus.json` and `.md` with
+  ingestion, projection, and enrichment counts.
+
 This experiment does not require wallet keys, Binance keys, signed endpoints, or
 live trading.
