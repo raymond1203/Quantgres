@@ -17,6 +17,12 @@ queries?
 The batch item table is append-oriented. Re-running the same batch id uses
 `ON CONFLICT DO NOTHING`; it does not update prior feature rows.
 
+Feature batch smoke uses the Feature Store source row ordering, so rows with
+event-time aligned `swap_count > 0` are captured first. The smoke fails closed
+if the selected as-of batch item has zero swap count; this keeps immutable batch
+evidence tied to the real BNB swap corpus instead of only current market rows
+with no observed on-chain event.
+
 ## Reproducibility Metadata
 
 Batch ids include more than the typed feature rows. The batch material also
@@ -65,4 +71,5 @@ Expected behavior:
 - Inserts typed batch items.
 - Records config, code, dependency, and runtime fingerprints in batch metadata.
 - Reads the latest item as of a timestamp within the batch.
+- Verifies the as-of item includes a nonzero event-time aligned swap count.
 - Prints the as-of query plan and index names.

@@ -559,6 +559,8 @@ def run_feature_batch_smoke(
     )
     if not rows:
         raise RuntimeError("Expected at least one feature source row.")
+    if rows[0].swap_count == 0:
+        raise RuntimeError("Expected first feature batch source row to include swap_count > 0.")
 
     config = build_batch_config(
         symbol=symbol,
