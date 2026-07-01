@@ -64,6 +64,9 @@ characters. The current worker dispatch table is intentionally small:
 - `bnb_block_timestamp`: projects PancakeSwap swap logs, reuses cached
   `onchain.blocks` rows, fetches missing block timestamps, and enriches
   `defi.swap_events`
+- `bnb_swap_corpus`: runs the wider windowed BNB Swap corpus ingestion path,
+  stores raw logs, projects swaps, enriches timestamps, and writes the
+  generated on-chain report paths into the worker execution summary
 
 Successful jobs are marked `completed`. Failed jobs go through the existing
 `failed` or `dead_letter` status transition based on `attempts` and
@@ -113,11 +116,11 @@ uv run quantgres queue-worker-smoke --run-key default
 
 Expected behavior:
 
-- Seeds one Binance kline job and one BNB block timestamp job under the worker
-  prefix.
+- Seeds one Binance kline job, one BNB block timestamp job, and one BNB swap
+  corpus job under the worker prefix.
 - Claims each job with `FOR UPDATE SKIP LOCKED`.
 - Executes the real ingestion payload.
-- Marks both jobs `completed`.
+- Marks all jobs `completed`.
 - Prints execution summaries and final queue statuses.
 
 Run stale-lock recovery smoke:

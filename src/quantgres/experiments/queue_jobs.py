@@ -10,6 +10,12 @@ from psycopg.types.json import Jsonb
 from quantgres.db import connect, query_text
 from quantgres.experiments.binance_candles import fetch_and_store_binance_klines
 from quantgres.experiments.bnb_block_timestamps import run_bnb_block_timestamp_smoke
+from quantgres.experiments.bnb_swap_corpus import (
+    DEFAULT_CORPUS_FROM_BLOCK,
+    DEFAULT_CORPUS_TO_BLOCK,
+    DEFAULT_CORPUS_WINDOW_SIZE,
+    run_bnb_swap_corpus_smoke,
+)
 from quantgres.experiments.bnb_swap_projection import (
     PANCAKESWAP_SAMPLE_BLOCK,
     PANCAKESWAP_V2_SWAP_TOPIC0,
@@ -470,6 +476,25 @@ def build_worker_jobs(
             "priority": 10,
             "max_attempts": 2,
         },
+        {
+            "job_kind": "bnb_swap_corpus",
+            "idempotency_key": (
+                f"{prefix}bnb:swap-corpus:{DEFAULT_CORPUS_FROM_BLOCK}-"
+                f"{DEFAULT_CORPUS_TO_BLOCK}:w{DEFAULT_CORPUS_WINDOW_SIZE}"
+            ),
+            "payload": Jsonb(
+                {
+                    "from_block": DEFAULT_CORPUS_FROM_BLOCK,
+                    "to_block": DEFAULT_CORPUS_TO_BLOCK,
+                    "window_size": DEFAULT_CORPUS_WINDOW_SIZE,
+                    "address": PANCAKESWAP_V2_WBNB_USDT_PAIR,
+                    "topic0": PANCAKESWAP_V2_SWAP_TOPIC0,
+                    "limit": 5,
+                }
+            ),
+            "priority": 5,
+            "max_attempts": 2,
+        },
     )
 
 
@@ -843,6 +868,28 @@ def execute_queue_job(job: QueueJob, database_url: str | None = None) -> dict[st
             "fetched_blocks": len(result.fetched_blocks),
             "projected_swaps": result.swap_projection.projected_events,
             "enriched_swaps": result.enriched_swaps,
+        }
+
+    if job.job_kind == "bnb_swap_corpus":
+        result = run_bnb_swap_corpus_smoke(
+            from_block=payload_int(job.payload, "from_block"),
+            to_block=payload_int(job.payload, "to_block"),
+            window_size=payload_int(job.payload, "window_size"),
+            pair_address=payload_string(job.payload, "address"),
+            topic0=payload_string(job.payload, "topic0"),
+            result_limit=payload_int(job.payload, "limit"),
+            database_url=database_url,
+        )
+        return {
+            "windows": len(result.windowed_ingestion.windows),
+            "rows_fetched": result.windowed_ingestion.rows_fetched,
+            "rows_upserted": result.windowed_ingestion.rows_upserted,
+            "projected_swaps": result.projected_events,
+            "requested_blocks": len(result.requested_block_numbers),
+            "fetched_blocks": len(result.fetched_blocks),
+            "enriched_swaps": result.enriched_swaps,
+            "report_json": str(result.report.json_path),
+            "report_markdown": str(result.report.markdown_path),
         }
 
     raise ValueError(f"Unsupported queue job kind: {job.job_kind}")
