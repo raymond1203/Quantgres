@@ -22,6 +22,12 @@ it can reject `eth_getLogs` with `limit exceeded` even for narrow filters. The
 default CLI endpoint is therefore a keyless public BSC RPC endpoint that supports
 small `eth_getLogs` ranges. Use `--rpc-url` to override it.
 
+For wider on-chain corpus collection, Quantgres uses repeated narrow
+`eth_getLogs` calls instead of one large range request. The current corpus smoke
+defaults to 10-block windows because the public endpoint accepted 10-block
+PancakeSwap Swap ranges during local verification but rejected larger single
+range calls.
+
 ## Schema
 
 SQL file:
@@ -64,6 +70,20 @@ Expected behavior:
 - Stores raw logs in `onchain.raw_logs`.
 - Preserves the full JSON payload in JSONB.
 - Upserts by `(chain_id, transaction_hash, log_index)`.
+
+Ingest and report a wider PancakeSwap V2 swap corpus with windowed log calls:
+
+```powershell
+uv run quantgres bnb-swap-corpus-smoke
+```
+
+Expected behavior:
+
+- Splits the configured BNB block range into small inclusive windows.
+- Stores each window's raw logs in `onchain.raw_logs`.
+- Records per-window fetched/upserted counts for evidence.
+- Projects and enriches the resulting swaps through the DeFi tables.
+- Writes JSON and Markdown reports under `reports/generated/onchain/`.
 
 This experiment does not require wallet keys, exchange keys, or paid RPC
 provider credentials.

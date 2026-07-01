@@ -14,6 +14,13 @@ from quantgres.experiments.bnb_block_timestamps import (
     run_bnb_block_timestamp_smoke,
 )
 from quantgres.experiments.bnb_raw_logs import BnbLogIngestionResult, fetch_and_store_bnb_logs
+from quantgres.experiments.bnb_swap_corpus import (
+    DEFAULT_CORPUS_FROM_BLOCK,
+    DEFAULT_CORPUS_TO_BLOCK,
+    DEFAULT_CORPUS_WINDOW_SIZE,
+    BnbSwapCorpusSmokeResult,
+    run_bnb_swap_corpus_smoke,
+)
 from quantgres.experiments.bnb_swap_projection import (
     PANCAKESWAP_SAMPLE_BLOCK,
     PANCAKESWAP_V2_SWAP_TOPIC0,
@@ -188,6 +195,20 @@ def build_parser() -> ArgumentParser:
     bnb_block_timestamp.add_argument("--topic0", default=PANCAKESWAP_V2_SWAP_TOPIC0)
     bnb_block_timestamp.add_argument("--block-fetch-attempts", type=int, default=3)
     bnb_block_timestamp.add_argument("--block-fetch-retry-sleep", type=float, default=0.25)
+
+    bnb_swap_corpus = subparsers.add_parser(
+        "bnb-swap-corpus-smoke",
+        help="Fetch a wider BNB Swap log corpus with windowed eth_getLogs calls.",
+    )
+    bnb_swap_corpus.add_argument("--rpc-url", default=DEFAULT_BNB_RPC_URL)
+    bnb_swap_corpus.add_argument("--from-block", default=str(DEFAULT_CORPUS_FROM_BLOCK))
+    bnb_swap_corpus.add_argument("--to-block", default=str(DEFAULT_CORPUS_TO_BLOCK))
+    bnb_swap_corpus.add_argument("--window-size", type=int, default=DEFAULT_CORPUS_WINDOW_SIZE)
+    bnb_swap_corpus.add_argument("--address", default=PANCAKESWAP_V2_WBNB_USDT_PAIR)
+    bnb_swap_corpus.add_argument("--topic0", default=PANCAKESWAP_V2_SWAP_TOPIC0)
+    bnb_swap_corpus.add_argument("--block-fetch-attempts", type=int, default=3)
+    bnb_swap_corpus.add_argument("--block-fetch-retry-sleep", type=float, default=0.25)
+    bnb_swap_corpus.add_argument("--limit", type=int, default=5)
 
     jsonb_smoke = subparsers.add_parser(
         "jsonb-document-smoke",
@@ -663,6 +684,77 @@ def run_bnb_block_timestamp(args: Namespace) -> int:
     if not result.requested_block_numbers or result.stored_blocks == 0:
         return 1
     if result.enriched_swaps == 0 or not result.sample_events:
+        return 1
+
+    return 0
+
+
+def format_bnb_swap_corpus(result: BnbSwapCorpusSmokeResult) -> list[str]:
+    ingestion = result.windowed_ingestion
+    lines = [
+        "BNB Swap Corpus Smoke",
+        f"RPC URL: {ingestion.rpc_url}",
+        f"Chain ID: {ingestion.chain_id}",
+        f"Range: {ingestion.from_block}..{ingestion.to_block}",
+        f"Window size: {ingestion.window_size}",
+        f"Windows: {len(ingestion.windows)}",
+        f"Rows fetched: {ingestion.rows_fetched}",
+        f"Rows upserted: {ingestion.rows_upserted}",
+        f"Projected swaps: {result.projected_events}",
+        f"Requested blocks: {len(result.requested_block_numbers)}",
+        f"Cached blocks: {len(result.cached_block_numbers)}",
+        f"Missing blocks: {len(result.missing_block_numbers)}",
+        f"Fetched blocks: {len(result.fetched_blocks)}",
+        f"Upserted blocks: {result.upserted_blocks}",
+        f"Updated swaps: {result.updated_swaps}",
+        f"Enriched swaps: {result.enriched_swaps}",
+        f"JSON report: {result.report.json_path}",
+        f"Markdown report: {result.report.markdown_path}",
+        "Windows:",
+    ]
+    lines.extend(
+        (
+            f"- {window.from_block}..{window.to_block} "
+            f"rows_fetched={window.rows_fetched} "
+            f"rows_upserted={window.rows_upserted}"
+        )
+        for window in ingestion.windows
+    )
+    lines.append("Sample enriched swaps:")
+    lines.extend(
+        (
+            f"- block={event.block_number} "
+            f"timestamp={event.block_timestamp} "
+            f"tx={event.transaction_hash} "
+            f"log_index={event.log_index}"
+        )
+        for event in result.sample_events
+    )
+    return lines
+
+
+def run_bnb_swap_corpus(args: Namespace) -> int:
+    result = run_bnb_swap_corpus_smoke(
+        from_block=parse_bnb_block_arg(args.from_block),
+        to_block=parse_bnb_block_arg(args.to_block),
+        window_size=args.window_size,
+        pair_address=args.address,
+        topic0=args.topic0,
+        rpc_url=args.rpc_url,
+        block_fetch_policy=BlockFetchPolicy(
+            max_attempts=args.block_fetch_attempts,
+            retry_sleep_seconds=args.block_fetch_retry_sleep,
+        ),
+        result_limit=args.limit,
+    )
+    for line in format_bnb_swap_corpus(result):
+        print(line)
+
+    if result.windowed_ingestion.rows_fetched == 0:
+        return 1
+    if result.projected_events == 0:
+        return 1
+    if result.enriched_swaps == 0:
         return 1
 
     return 0
@@ -1496,6 +1588,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "bnb-block-timestamp-smoke":
         return run_bnb_block_timestamp(args)
+
+    if args.command == "bnb-swap-corpus-smoke":
+        return run_bnb_swap_corpus(args)
 
     if args.command == "jsonb-document-smoke":
         return run_jsonb_documents(args)
