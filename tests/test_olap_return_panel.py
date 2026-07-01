@@ -1,4 +1,37 @@
-from quantgres.experiments.olap_return_panel import summarize_plan
+from datetime import UTC, datetime
+
+import pytest
+
+from quantgres.experiments.olap_return_panel import (
+    build_binance_kline_window_ms,
+    datetime_to_milliseconds,
+    summarize_plan,
+)
+
+
+def test_build_binance_kline_window_ms_pads_event_minute_range():
+    start_ms, end_ms = build_binance_kline_window_ms(
+        (
+            datetime(2026, 6, 30, 14, 41, 44, tzinfo=UTC),
+            datetime(2026, 6, 30, 14, 42, 12, tzinfo=UTC),
+        ),
+        padding_minutes=5,
+    )
+
+    assert start_ms == datetime_to_milliseconds(datetime(2026, 6, 30, 14, 36, tzinfo=UTC))
+    assert end_ms == datetime_to_milliseconds(datetime(2026, 6, 30, 14, 48, tzinfo=UTC))
+
+
+def test_build_binance_kline_window_ms_allows_empty_timestamp_set():
+    assert build_binance_kline_window_ms(()) == (None, None)
+
+
+def test_build_binance_kline_window_ms_rejects_bad_inputs():
+    with pytest.raises(ValueError, match="padding_minutes"):
+        build_binance_kline_window_ms((), padding_minutes=-1)
+
+    with pytest.raises(TypeError, match="datetime"):
+        build_binance_kline_window_ms(("2026-06-30T14:41:44Z",))
 
 
 def test_summarize_plan_extracts_index_and_buffer_summary():
