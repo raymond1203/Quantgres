@@ -12,7 +12,9 @@ analysis or agent context decision?
 
 The smoke uses real upstream workflow outputs:
 
-- latest rows from `analytics.market_return_panel`
+- BNB swap corpus ingestion evidence from the OLAP upstream
+- swap-aligned rows from `analytics.market_return_panel`
+- as-of immutable batch items from `feature_store.quant_feature_batch_items`
 - top retrieval results from `memory.agent_memory_chunks`
 
 It then appends events to:
@@ -23,7 +25,9 @@ It then appends events to:
 
 The first vertical slice records:
 
-- `olap_return_panel_observed`
+- `bnb_swap_corpus_ingested`
+- `olap_swap_aligned_observed`
+- `feature_batch_item_observed`
 - `vector_memory_retrieval_observed`
 
 Each event stores:
@@ -51,6 +55,10 @@ The smoke uses `SET LOCAL enable_seqscan = off` for the payload containment
 path. Normal planner behavior can prefer a sequential scan when there are only a
 few audit rows.
 
+The payload containment check looks for `{"pipeline": "bnb_swap_corpus"}` so the
+audit log proves it can find the on-chain ingestion, OLAP alignment, and feature
+batch evidence by JSONB payload content.
+
 ## Verification
 
 Run:
@@ -61,7 +69,8 @@ uv run quantgres event-store-smoke
 
 Expected behavior:
 
-- Refreshes the real OLAP and VectorDB source workflows.
+- Refreshes the real OLAP, Feature Batch, and VectorDB source workflows.
+- Carries BNB swap corpus evidence through event payloads.
 - Appends or skips deterministic audit events.
 - Queries events by subject.
 - Runs a JSONB payload containment query.
