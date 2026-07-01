@@ -1,8 +1,14 @@
 from decimal import Decimal
 
 from quantgres.cli import main
+from quantgres.experiments.binance_candles import BinanceCandleIngestionResult
 from quantgres.experiments.bnb_raw_logs import BnbLogWindowResult, BnbWindowedLogIngestionResult
 from quantgres.experiments.bnb_swap_corpus import BnbSwapCorpusSmokeResult
+from quantgres.experiments.cache_summary import (
+    CachePlanSummary,
+    CacheSummaryRow,
+    CacheSummarySmokeResult,
+)
 from quantgres.experiments.embedding_comparison import (
     FASTEMBED_MODEL_DIMENSIONS,
     MODEL_VECTOR_INDEX_NAME,
@@ -337,6 +343,86 @@ def test_bnb_swap_corpus_smoke_prints_windowed_summary(monkeypatch, capsys, tmp_
     assert "Rows fetched: 2" in output
     assert "Projected swaps: 2" in output
     assert "JSON report:" in output
+
+
+def test_cache_summary_smoke_prints_corpus_counts(monkeypatch, capsys, tmp_path):
+    result = CacheSummarySmokeResult(
+        binance_ingestion=BinanceCandleIngestionResult(
+            symbol="BTCUSDT",
+            interval="1m",
+            source="binance_spot_klines",
+            rows_fetched=5,
+            rows_upserted=5,
+            first_ts=None,
+            last_ts=None,
+        ),
+        swap_corpus=BnbSwapCorpusSmokeResult(
+            windowed_ingestion=BnbWindowedLogIngestionResult(
+                rpc_url="https://example.invalid",
+                chain_id=56,
+                from_block=100,
+                to_block=109,
+                address="0xpair",
+                topic0="0xtopic",
+                window_size=10,
+                windows=(
+                    BnbLogWindowResult(
+                        from_block=100,
+                        to_block=109,
+                        rows_fetched=2,
+                        rows_upserted=2,
+                    ),
+                ),
+            ),
+            projected_events=2,
+            requested_block_numbers=(100, 101),
+            cached_block_numbers=(100, 101),
+            missing_block_numbers=(),
+            fetched_blocks=(),
+            upserted_blocks=0,
+            updated_swaps=2,
+            enriched_swaps=2,
+            sample_events=(),
+            report=WrittenReport(
+                json_path=tmp_path / "bnb-swap-corpus.json",
+                markdown_path=tmp_path / "bnb-swap-corpus.md",
+            ),
+        ),
+        refreshed_rows=2,
+        selected_summary=CacheSummaryRow(
+            summary_key="onchain:pancakeswap_v2:bnb-usdt",
+            summary_kind="onchain",
+            latest_observed_at="2026-01-01 00:00:00+00",
+            metrics={"swap_count": 2, "enriched_swap_count": 2},
+        ),
+        base_plan=CachePlanSummary(
+            root_node_type="Aggregate",
+            index_names=("swap_events_pair_block_timestamp_idx",),
+            planning_time_ms=0.1,
+            execution_time_ms=0.2,
+            shared_hit_blocks=1,
+            shared_read_blocks=0,
+        ),
+        cache_plan=CachePlanSummary(
+            root_node_type="Index Scan",
+            index_names=("market_onchain_summary_key_idx",),
+            planning_time_ms=0.1,
+            execution_time_ms=0.2,
+            shared_hit_blocks=1,
+            shared_read_blocks=0,
+        ),
+    )
+    monkeypatch.setattr("quantgres.cli.run_cache_summary_smoke", lambda **_: result)
+
+    exit_code = main(["cache-summary-smoke"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Cache Summary Smoke" in output
+    assert "Swap corpus projected: 2" in output
+    assert "Swap corpus enriched: 2" in output
+    assert "enriched_swap_count" in output
 
 
 def test_queue_stale_lock_smoke_prints_recovery_summary(monkeypatch, capsys):

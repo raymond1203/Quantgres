@@ -1,6 +1,8 @@
 CREATE SCHEMA IF NOT EXISTS cache;
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS cache.market_onchain_summary AS
+DROP MATERIALIZED VIEW IF EXISTS cache.market_onchain_summary;
+
+CREATE MATERIALIZED VIEW cache.market_onchain_summary AS
 WITH market_summary AS (
     SELECT
         concat('market:', symbol) AS summary_key,
@@ -25,15 +27,18 @@ onchain_summary AS (
     SELECT
         concat('onchain:', dex, ':bnb-usdt') AS summary_key,
         'onchain' AS summary_kind,
-        max(projected_at) AS latest_observed_at,
+        max(block_timestamp) AS latest_observed_at,
         jsonb_build_object(
             'chain_id', chain_id,
             'dex', dex,
             'pair_address', pair_address,
             'swap_count', count(*),
+            'enriched_swap_count', count(*),
             'block_count', count(DISTINCT block_number),
             'first_block', min(block_number),
             'last_block', max(block_number),
+            'first_block_timestamp', min(block_timestamp),
+            'last_block_timestamp', max(block_timestamp),
             'amount0_in_sum', sum(amount0_in)::text,
             'amount1_in_sum', sum(amount1_in)::text,
             'amount0_out_sum', sum(amount0_out)::text,
@@ -43,6 +48,7 @@ onchain_summary AS (
     WHERE chain_id = 56
       AND dex = 'pancakeswap_v2'
       AND pair_address = '0x16b9a82891338f9ba80e2d6970fdda79d1eb0dae'
+      AND block_timestamp IS NOT NULL
     GROUP BY chain_id, dex, pair_address
 )
 SELECT

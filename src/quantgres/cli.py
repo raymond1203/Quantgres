@@ -1056,7 +1056,8 @@ def format_cache_summary_smoke(result: CacheSummarySmokeResult) -> list[str]:
     return [
         "Cache Summary Smoke",
         f"Binance rows fetched: {result.binance_ingestion.rows_fetched}",
-        f"Swap events projected: {result.swap_projection.projected_events}",
+        f"Swap corpus projected: {result.swap_corpus.projected_events}",
+        f"Swap corpus enriched: {result.swap_corpus.enriched_swaps}",
         f"Materialized rows: {result.refreshed_rows}",
         (
             f"Selected summary: key={summary.summary_key} "
