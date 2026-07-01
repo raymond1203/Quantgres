@@ -8,7 +8,10 @@ import pytest
 from quantgres.experiments.binance_candles import BinanceCandleIngestionResult
 from quantgres.experiments.search_documents import (
     FULL_TEXT_INDEX_NAME,
+    FULL_TEXT_SEARCH_SQL,
     TRIGRAM_INDEX_NAME,
+    TRIGRAM_SEARCH_SQL,
+    UPSERT_SEARCH_DOCUMENTS_SQL,
     SearchPlanSummary,
     SearchResultRow,
     TrigramResultRow,
@@ -90,8 +93,8 @@ def build_report() -> dict[str, Any]:
         binance_documents_upserted=200,
         bnb_documents_upserted=2,
         projected_documents=202,
-        source_counts=(("binance_kline", 200), ("bnb_rpc_log", 2)),
-        full_text_query="binance kline market candle",
+        source_counts=(("binance_kline", 200), ("bnb_swap_corpus", 2)),
+        full_text_query="pancakeswap swap corpus",
         fuzzy_query="0x16b9a82891338f9b",
         result_limit=5,
         full_text_results=(
@@ -99,7 +102,9 @@ def build_report() -> dict[str, Any]:
                 "binance_kline", "BTCUSDT:1", "BTCUSDT Binance 1m kline", Decimal("0.1")
             ),
         ),
-        trigram_results=(TrigramResultRow("bnb_rpc_log", "56:tx:1", "0x16b9a82891338f9b", 0.9),),
+        trigram_results=(
+            TrigramResultRow("bnb_swap_corpus", "56:tx:1", "0x16b9a82891338f9b", 0.9),
+        ),
         full_text_plan=SearchPlanSummary(
             root_node_type="Limit",
             planning_time_ms=0.1,
@@ -123,6 +128,8 @@ def test_build_search_benchmark_report_includes_dataset_and_plan():
     assert report["title"] == "SearchDB Larger Corpus Benchmark"
     assert report["ingestion"]["binance_rows_fetched"] == 200
     assert report["dataset_sizes"]["binance_kline"] == 200
+    assert report["dataset_sizes"]["bnb_swap_corpus"] == 2
+    assert report["parameters"]["bnb_document_limit"] == 25
     assert report["plan_summary"]["full_text"]["index_names"] == [FULL_TEXT_INDEX_NAME]
     assert report["plan_summary"]["trigram"]["index_names"] == [TRIGRAM_INDEX_NAME]
 
@@ -133,6 +140,7 @@ def test_build_search_benchmark_markdown_includes_required_sections():
     assert "## Dataset" in markdown
     assert "## Full-Text Results" in markdown
     assert "## Trigram Results" in markdown
+    assert "BNB corpus document limit" in markdown
     assert FULL_TEXT_INDEX_NAME in markdown
     assert TRIGRAM_INDEX_NAME in markdown
 
@@ -143,3 +151,17 @@ def test_write_search_benchmark_report_creates_json_and_markdown(tmp_path: Path)
     assert written.json_path.exists()
     assert written.markdown_path.exists()
     assert "SearchDB Larger Corpus Benchmark" in written.markdown_path.read_text(encoding="utf-8")
+
+
+def test_search_projection_includes_bnb_swap_corpus_documents():
+    assert "source IN ('binance_kline', 'bnb_rpc_log', 'bnb_swap_corpus')" in (
+        UPSERT_SEARCH_DOCUMENTS_SQL
+    )
+    assert "BNB Chain PancakeSwap swap corpus" in UPSERT_SEARCH_DOCUMENTS_SQL
+    assert "bnb chain pancakeswap swap corpus enriched event time" in UPSERT_SEARCH_DOCUMENTS_SQL
+    assert "payload ->> 'pair_address'" in UPSERT_SEARCH_DOCUMENTS_SQL
+
+
+def test_search_queries_filter_to_current_corpus_sources():
+    for sql in (FULL_TEXT_SEARCH_SQL, TRIGRAM_SEARCH_SQL):
+        assert "source IN ('binance_kline', 'bnb_swap_corpus')" in sql

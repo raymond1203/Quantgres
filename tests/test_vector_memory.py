@@ -1,6 +1,8 @@
 import math
 
 from quantgres.experiments.vector_memory import (
+    SELECT_SEARCH_DOCUMENTS_SQL,
+    SIMILARITY_SEARCH_SQL,
     embed_text,
     summarize_vector_plan,
     tokenize,
@@ -28,11 +30,13 @@ def test_tokenize_extracts_lowercase_alphanumeric_tokens():
 
 
 def test_domain_tokens_make_pancakeswap_query_closer_to_bnb_text():
-    query = embed_text("pancakeswap swap bnb chain")
-    bnb_text = embed_text("bnb chain pancakeswap swap rpc log")
+    query = embed_text("pancakeswap swap bnb chain corpus")
+    bnb_text = embed_text("bnb chain pancakeswap swap corpus enriched event time")
+    raw_log_text = embed_text("bnb chain pancakeswap swap rpc log")
     binance_text = embed_text("binance kline market candle btcusdt")
 
     assert cosine(query, bnb_text) > cosine(query, binance_text)
+    assert cosine(query, bnb_text) > cosine(query, raw_log_text)
 
 
 def test_vector_literal_formats_pgvector_literal():
@@ -62,3 +66,9 @@ def test_summarize_vector_plan_extracts_hnsw_index_name():
     assert summary.index_names == ("agent_memory_chunks_embedding_hnsw_idx",)
     assert summary.planning_time_ms == 0.2
     assert summary.execution_time_ms == 0.4
+
+
+def test_vector_queries_filter_to_current_corpus_sources():
+    for sql in (SELECT_SEARCH_DOCUMENTS_SQL, SIMILARITY_SEARCH_SQL):
+        assert "source IN ('binance_kline', 'bnb_swap_corpus')" in sql
+    assert "CASE WHEN source = 'bnb_swap_corpus' THEN 0 ELSE 1 END" in SELECT_SEARCH_DOCUMENTS_SQL

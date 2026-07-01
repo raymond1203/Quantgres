@@ -1,7 +1,7 @@
 # JSONB Document Store Experiment
 
 This experiment uses PostgreSQL JSONB as a document store for raw API and RPC
-payloads.
+payloads and typed on-chain corpus documents.
 
 ## Study Question
 
@@ -14,7 +14,7 @@ chain, and containment queries?
 The smoke does not use mock payloads. It refreshes real upstream data first:
 
 - Binance public `GET /api/v3/klines`
-- BNB Chain JSON-RPC `eth_getLogs`
+- Windowed BNB Chain PancakeSwap V2 Swap corpus with block timestamps
 
 It then copies those stored rows into `documents.raw_payloads`.
 
@@ -52,9 +52,9 @@ uv run quantgres jsonb-document-smoke --symbol BTCUSDT --document-limit 10
 Expected behavior:
 
 - Fetches real Binance klines.
-- Fetches real BNB Chain PancakeSwap V2 Swap logs.
+- Fetches and enriches the real BNB Chain PancakeSwap V2 Swap corpus.
 - Stores both as JSONB documents.
-- Runs a JSONB containment query on the BNB log address.
+- Runs a JSONB containment query on the BNB swap corpus pair address.
 - Prints document counts and a plan summary.
 
 This is the first JSONB document-store layer. Later loops can compare

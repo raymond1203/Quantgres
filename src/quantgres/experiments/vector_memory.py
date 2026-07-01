@@ -26,6 +26,9 @@ DOMAIN_TOKEN_BUCKETS = {
     "btcusdt": 6,
     "candle": 7,
     "market": 8,
+    "corpus": 9,
+    "enriched": 10,
+    "event": 11,
 }
 
 SELECT_SEARCH_DOCUMENTS_SQL = """
@@ -37,7 +40,12 @@ SELECT
     document_text,
     metadata
 FROM search.search_documents
-ORDER BY observed_at DESC, source, external_id
+WHERE source IN ('binance_kline', 'bnb_swap_corpus')
+ORDER BY
+    CASE WHEN source = 'bnb_swap_corpus' THEN 0 ELSE 1 END,
+    observed_at DESC,
+    source,
+    external_id
 LIMIT %(limit)s
 """
 
@@ -77,6 +85,7 @@ SELECT
     left(chunk_text, 180) AS preview,
     1 - (embedding <=> %(query_embedding)s::vector) AS cosine_similarity
 FROM memory.agent_memory_chunks
+WHERE source IN ('binance_kline', 'bnb_swap_corpus')
 ORDER BY embedding <=> %(query_embedding)s::vector
 LIMIT %(limit)s
 """
@@ -348,7 +357,7 @@ def load_similarity_plan(
 
 def run_vector_memory_smoke(
     *,
-    query: str = "pancakeswap swap bnb chain",
+    query: str = "pancakeswap swap bnb chain corpus",
     source_limit: int = 1000,
     result_limit: int = 5,
     database_url: str | None = None,

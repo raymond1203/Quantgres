@@ -42,7 +42,8 @@ uv run quantgres hybrid-retrieval-smoke
 
 Expected behavior:
 
-- Refreshes the real SearchDB and VectorDB source workflows.
+- Refreshes the real SearchDB and VectorDB source workflows from the enriched
+  BNB swap corpus path.
 - Returns ranked rows with text, trigram, vector, and hybrid scores.
 - Prints an `EXPLAIN ANALYZE` plan summary with index names.
 

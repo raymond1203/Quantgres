@@ -30,7 +30,8 @@ WITH text_candidates AS (
             32
         )::double precision AS text_rank
     FROM search.search_documents
-    WHERE search_vector @@ websearch_to_tsquery('english', %(query)s)
+    WHERE source IN ('binance_kline', 'bnb_swap_corpus')
+      AND search_vector @@ websearch_to_tsquery('english', %(query)s)
     ORDER BY text_rank DESC, observed_at DESC
     LIMIT %(candidate_limit)s
 ),
@@ -43,7 +44,8 @@ trigram_candidates AS (
         fuzzy_key,
         similarity(fuzzy_key, %(fuzzy_query)s)::double precision AS trigram_similarity
     FROM search.search_documents
-    WHERE fuzzy_key %% %(fuzzy_query)s
+    WHERE source IN ('binance_kline', 'bnb_swap_corpus')
+      AND fuzzy_key %% %(fuzzy_query)s
     ORDER BY trigram_similarity DESC, observed_at DESC
     LIMIT %(candidate_limit)s
 ),
@@ -59,6 +61,7 @@ vector_candidates AS (
             (1 - (embedding <=> %(query_embedding)s::vector))::double precision
         ) AS vector_similarity
     FROM memory.agent_memory_chunks
+    WHERE source IN ('binance_kline', 'bnb_swap_corpus')
     ORDER BY embedding <=> %(query_embedding)s::vector
     LIMIT %(candidate_limit)s
 ),
@@ -295,7 +298,7 @@ def load_hybrid_plan(
 
 def run_hybrid_retrieval_smoke(
     *,
-    query: str = "pancakeswap swap bnb chain",
+    query: str = "pancakeswap swap bnb chain corpus",
     fuzzy_query: str = "0x16b9a82891338f9b",
     source_limit: int = 1000,
     candidate_limit: int = 100,

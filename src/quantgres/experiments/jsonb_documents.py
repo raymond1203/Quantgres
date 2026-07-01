@@ -6,7 +6,8 @@ from psycopg.types.json import Jsonb
 
 from quantgres.db import connect, query_text
 from quantgres.experiments.binance_candles import BINANCE_SOURCE, fetch_and_store_binance_klines
-from quantgres.experiments.bnb_raw_logs import fetch_and_store_bnb_logs
+from quantgres.experiments.bnb_swap_corpus import run_bnb_swap_corpus_smoke
+from quantgres.experiments.olap_return_panel import build_binance_kline_window_ms
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DOCUMENT_SQL_DIR = PROJECT_ROOT / "sql" / "documents"
@@ -15,6 +16,7 @@ RAW_PAYLOADS_SCHEMA_SQL = DOCUMENT_SQL_DIR / "001_raw_payloads_schema.sql"
 PANCAKESWAP_V2_WBNB_USDT_PAIR = "0x16b9a82891338f9ba80e2d6970fdda79d1eb0dae"
 PANCAKESWAP_V2_SWAP_TOPIC0 = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"
 PANCAKESWAP_SAMPLE_BLOCK = 107270817
+PANCAKESWAP_V2 = "pancakeswap_v2"
 
 INSERT_BINANCE_DOCUMENTS_SQL = """
 WITH latest_candles AS (
@@ -103,6 +105,58 @@ SET observed_at = EXCLUDED.observed_at,
     ingested_at = now()
 """
 
+INSERT_BNB_SWAP_CORPUS_DOCUMENTS_SQL = """
+WITH latest_swaps AS (
+    SELECT *
+    FROM defi.swap_events
+    WHERE chain_id = %(chain_id)s
+      AND dex = %(dex)s
+      AND pair_address = %(pair_address)s
+      AND block_timestamp IS NOT NULL
+    ORDER BY block_timestamp DESC, block_number DESC, log_index DESC
+    LIMIT %(limit)s
+)
+INSERT INTO documents.raw_payloads (
+    source,
+    external_id,
+    observed_at,
+    symbol,
+    chain_id,
+    payload
+)
+SELECT
+    'bnb_swap_corpus',
+    concat(chain_id::text, ':', transaction_hash, ':', log_index::text),
+    block_timestamp,
+    NULL,
+    chain_id,
+    jsonb_build_object(
+        'source', 'bnb_swap_corpus',
+        'chain_id', chain_id,
+        'dex', dex,
+        'pair_address', pair_address,
+        'block_number', block_number,
+        'block_hash', block_hash,
+        'block_timestamp', block_timestamp,
+        'transaction_hash', transaction_hash,
+        'transaction_index', transaction_index,
+        'log_index', log_index,
+        'sender', sender,
+        'recipient', recipient,
+        'amount0_in', amount0_in::text,
+        'amount1_in', amount1_in::text,
+        'amount0_out', amount0_out::text,
+        'amount1_out', amount1_out::text
+    )
+FROM latest_swaps
+ON CONFLICT (source, external_id) DO UPDATE
+SET observed_at = EXCLUDED.observed_at,
+    symbol = EXCLUDED.symbol,
+    chain_id = EXCLUDED.chain_id,
+    payload = EXCLUDED.payload,
+    ingested_at = now()
+"""
+
 COUNT_DOCUMENTS_SQL = """
 SELECT source, count(*)::integer
 FROM documents.raw_payloads
@@ -113,9 +167,11 @@ ORDER BY source
 BNB_CONTAINMENT_QUERY = """
 SELECT count(*)::integer
 FROM documents.raw_payloads
-WHERE source = 'bnb_rpc_log'
+WHERE source = 'bnb_swap_corpus'
   AND payload @> %s::jsonb
 """
+
+BNB_CONTAINMENT_FILTER = {"pair_address": PANCAKESWAP_V2_WBNB_USDT_PAIR}
 
 EXPLAIN_BNB_CONTAINMENT_QUERY = f"""
 EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
@@ -180,6 +236,24 @@ def upsert_bnb_log_documents(
         return cursor.rowcount
 
 
+def upsert_bnb_swap_corpus_documents(
+    *,
+    limit: int,
+    database_url: str | None = None,
+) -> int:
+    with connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            query_text(INSERT_BNB_SWAP_CORPUS_DOCUMENTS_SQL),
+            {
+                "chain_id": 56,
+                "dex": PANCAKESWAP_V2,
+                "pair_address": PANCAKESWAP_V2_WBNB_USDT_PAIR,
+                "limit": limit,
+            },
+        )
+        return cursor.rowcount
+
+
 def load_source_counts(database_url: str | None = None) -> tuple[tuple[str, int], ...]:
     with connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute(query_text(COUNT_DOCUMENTS_SQL))
@@ -192,7 +266,7 @@ def load_bnb_containment_count(database_url: str | None = None) -> int:
     with connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute(
             query_text(BNB_CONTAINMENT_QUERY),
-            (Jsonb({"address": PANCAKESWAP_V2_WBNB_USDT_PAIR}),),
+            (Jsonb(BNB_CONTAINMENT_FILTER),),
         )
         row = cursor.fetchone()
 
@@ -233,17 +307,19 @@ def run_jsonb_document_smoke(
     database_url: str | None = None,
 ) -> JsonbDocumentSmokeResult:
     ensure_document_schema(database_url)
+    swap_corpus = run_bnb_swap_corpus_smoke(
+        result_limit=max(document_limit, 10),
+        database_url=database_url,
+    )
+    start_time_ms, end_time_ms = build_binance_kline_window_ms(
+        tuple(event.block_timestamp for event in swap_corpus.sample_events)
+    )
     fetch_and_store_binance_klines(
         symbol=symbol,
         interval="1m",
         limit=60,
-        database_url=database_url,
-    )
-    fetch_and_store_bnb_logs(
-        from_block=PANCAKESWAP_SAMPLE_BLOCK,
-        to_block=PANCAKESWAP_SAMPLE_BLOCK,
-        address=PANCAKESWAP_V2_WBNB_USDT_PAIR,
-        topic0=PANCAKESWAP_V2_SWAP_TOPIC0,
+        start_time_ms=start_time_ms,
+        end_time_ms=end_time_ms,
         database_url=database_url,
     )
     binance_documents_upserted = upsert_binance_documents(
@@ -251,7 +327,7 @@ def run_jsonb_document_smoke(
         limit=document_limit,
         database_url=database_url,
     )
-    bnb_documents_upserted = upsert_bnb_log_documents(
+    bnb_documents_upserted = upsert_bnb_swap_corpus_documents(
         limit=document_limit,
         database_url=database_url,
     )

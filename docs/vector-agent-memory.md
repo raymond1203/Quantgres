@@ -13,7 +13,7 @@ similarity search while preserving source metadata and replayability?
 The smoke refreshes the existing real-data pipeline first:
 
 - Binance public klines
-- BNB Chain RPC logs
+- Enriched BNB Chain PancakeSwap swap corpus
 - JSONB documents
 - SearchDB text projection
 
@@ -90,12 +90,12 @@ Index:
 Run:
 
 ```powershell
-uv run quantgres vector-memory-smoke --query "pancakeswap swap bnb chain"
+uv run quantgres vector-memory-smoke --query "pancakeswap swap bnb chain corpus"
 ```
 
 Expected behavior:
 
-- Refreshes real JSONB/SearchDB source data.
+- Refreshes real JSONB/SearchDB source data from the BNB swap corpus path.
 - Upserts memory chunks into `memory.agent_memory_chunks`.
 - Runs cosine similarity search with pgvector `<=>`.
 - Prints top results and a plan summary.
@@ -106,7 +106,7 @@ or live trading.
 Run the real embedding comparison:
 
 ```powershell
-uv run quantgres embedding-comparison-smoke --query "pancakeswap swap bnb chain" --source-limit 20 --limit 5
+uv run quantgres embedding-comparison-smoke --query "pancakeswap swap bnb chain corpus" --source-limit 20 --limit 5
 ```
 
 Expected behavior:
@@ -127,7 +127,7 @@ The retrieval benchmark wraps the same real-data path and writes local JSON and
 Markdown evidence under `reports/generated/vector/`:
 
 ```powershell
-uv run quantgres vector-retrieval-benchmark --query "pancakeswap swap bnb chain" --source-limit 20 --limit 5
+uv run quantgres vector-retrieval-benchmark --query "pancakeswap swap bnb chain corpus" --source-limit 20 --limit 5
 ```
 
 The report records:

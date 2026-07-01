@@ -12,7 +12,7 @@ so PostgreSQL can support ranked full-text search and fuzzy trigram lookup?
 The smoke refreshes real upstream data through:
 
 - Binance public klines
-- BNB Chain JSON-RPC logs
+- Windowed BNB Chain PancakeSwap swap corpus with block timestamps
 - `documents.raw_payloads`
 
 It then projects those documents into `search.search_documents`.
@@ -43,12 +43,12 @@ Indexes:
 ## Verification
 
 ```powershell
-uv run quantgres search-document-smoke --query "pancakeswap swap" --fuzzy 0x16b9a82891338f9b --limit 5
+uv run quantgres search-document-smoke --query "pancakeswap swap corpus" --fuzzy 0x16b9a82891338f9b --limit 5
 ```
 
 Expected behavior:
 
-- Refreshes real JSONB documents from Binance and BNB Chain data.
+- Refreshes real JSONB documents from Binance and the enriched BNB swap corpus.
 - Projects documents into the search table.
 - Returns full-text results for the PancakeSwap swap query.
 - Returns trigram results for the partial pair address.
@@ -68,7 +68,7 @@ uv run quantgres search-document-benchmark --symbols BTCUSDT,ETHUSDT,BNBUSDT --b
 Expected behavior:
 
 - Fetches Binance public klines for each requested symbol.
-- Projects those klines plus the PancakeSwap BNB log document into
+- Projects those klines plus the enriched PancakeSwap BNB swap corpus into
   `search.search_documents`.
 - Runs full-text search and trigram search.
 - Writes JSON and Markdown reports under `reports/generated/search/`.

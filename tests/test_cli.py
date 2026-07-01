@@ -509,8 +509,8 @@ def test_search_document_benchmark_prints_report_paths(monkeypatch, capsys, tmp_
         binance_documents_upserted=200,
         bnb_documents_upserted=2,
         projected_documents=202,
-        source_counts=(("binance_kline", 200), ("bnb_rpc_log", 2)),
-        full_text_query="binance kline market candle",
+        source_counts=(("binance_kline", 200), ("bnb_swap_corpus", 2)),
+        full_text_query="pancakeswap swap corpus",
         fuzzy_query="0x16b9a82891338f9b",
         full_text_results=(
             SearchResultRow(
@@ -522,7 +522,7 @@ def test_search_document_benchmark_prints_report_paths(monkeypatch, capsys, tmp_
         ),
         trigram_results=(
             TrigramResultRow(
-                source="bnb_rpc_log",
+                source="bnb_swap_corpus",
                 external_id="56:tx:1",
                 fuzzy_key="0x16b9a82891338f9b",
                 score=0.9,
@@ -553,5 +553,6 @@ def test_search_document_benchmark_prints_report_paths(monkeypatch, capsys, tmp_
 
     assert exit_code == 0
     assert "SearchDB Larger Corpus Benchmark" in output
+    assert "BNB corpus documents upserted: 2" in output
     assert "JSON report:" in output
     assert "Markdown report:" in output
