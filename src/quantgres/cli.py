@@ -1293,6 +1293,8 @@ def run_feature_batch(args: Namespace) -> int:
 
     if result.total_batch_items == 0:
         return 1
+    if result.as_of_item.swap_count == 0:
+        return 1
     if BATCH_ASOF_INDEX_NAME not in result.plan.index_names:
         return 1
 

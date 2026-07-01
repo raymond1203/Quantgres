@@ -15,7 +15,7 @@ from quantgres.experiments.feature_store import FeatureSourceRow
 from quantgres.runtime import DatabaseRuntimeInfo, ExtensionStatus
 
 
-def source_row(close_price: str) -> FeatureSourceRow:
+def source_row(close_price: str, *, swap_count: int = 0) -> FeatureSourceRow:
     return FeatureSourceRow(
         symbol="BTCUSDT",
         event_ts="2026-01-01T00:00:00Z",
@@ -26,7 +26,7 @@ def source_row(close_price: str) -> FeatureSourceRow:
         rolling_5_return_bps=None,
         volume=Decimal("1"),
         quote_volume=Decimal("2"),
-        swap_count=0,
+        swap_count=swap_count,
         refreshed_at="2026-01-01T00:02:00Z",
         candle_source="binance_spot_klines",
     )
@@ -42,6 +42,21 @@ def test_build_batch_id_changes_when_source_rows_change():
         feature_set="market_return_v1",
         run_key="default",
         rows=(source_row("11"),),
+    )
+
+    assert left != right
+
+
+def test_build_batch_id_changes_when_swap_count_changes():
+    left = build_batch_id(
+        feature_set="market_return_v1",
+        run_key="default",
+        rows=(source_row("10", swap_count=0),),
+    )
+    right = build_batch_id(
+        feature_set="market_return_v1",
+        run_key="default",
+        rows=(source_row("10", swap_count=31),),
     )
 
     assert left != right
